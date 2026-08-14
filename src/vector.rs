@@ -4,9 +4,17 @@
 //!
 //! Nothing here is a pixel grid, so the letterforms stay true at any size:
 //! the strokes are rasterized crisply at sub-cell resolution and drawn with
-//! half-block characters, two square pixels per terminal cell. Coverage is
-//! deliberately hard-edged — blending partial coverage toward the background
-//! reads as a grey halo around the strokes rather than as smoothing.
+//! quadrant block characters — all sixteen combinations of a 2x2 split exist
+//! in Unicode, so each terminal cell carries four sub-pixels. Half-blocks
+//! alone would subdivide only vertically, leaving curves visibly stepped
+//! along the horizontal axis.
+//!
+//! Coverage is hard-edged rather than anti-aliased: blending partial coverage
+//! toward the background reads as a grey halo around the strokes.
+//!
+//! Coordinates are in *cell widths*. A terminal cell is one unit wide and two
+//! units tall, so a sub-pixel is 0.5 x 1.0 units — distances are computed in
+//! these units, which keeps circles round.
 
 use crate::render::{span, Line as OutLine};
 use crossterm::style::Color;
@@ -297,6 +305,9 @@ fn glyph(c: char) -> Vec<Prim> {
             },
             Line(CX, 0.5, GLYPH_W - TOP, BOT),
         ],
+        // Two bowls that meet at the spine: the upper one wraps from the
+        // right, over the top and down the left to its own bottom; the lower
+        // one picks up at its top and wraps right, under, and out to the left.
         'S' => vec![
             Arc {
                 cx: CX,
@@ -304,15 +315,15 @@ fn glyph(c: char) -> Vec<Prim> {
                 rx: RX,
                 ry: ry * 0.52,
                 a0: 20.0,
-                a1: -200.0,
+                a1: -270.0,
             },
             Arc {
                 cx: CX,
                 cy: BOT - ry * 0.52,
                 rx: RX,
                 ry: ry * 0.52,
-                a0: 200.0,
-                a1: 80.0,
+                a0: -90.0,
+                a1: 160.0,
             },
         ],
         'T' => vec![
@@ -445,7 +456,13 @@ pub fn fit_height(n: usize, avail_w: usize, avail_h: usize, max_h: f64) -> f64 {
     by_h.min(by_w).min(max_h).max(5.0)
 }
 
-/// Renders `text` as crisp half-block glyphs.
+/// The sixteen quadrant glyphs, indexed by `ul<<3 | ur<<2 | ll<<1 | lr`.
+const QUADRANTS: [char; 16] = [
+    ' ', '\u{2597}', '\u{2596}', '\u{2584}', '\u{259D}', '\u{2590}', '\u{259E}', '\u{259F}',
+    '\u{2598}', '\u{259A}', '\u{258C}', '\u{2599}', '\u{2580}', '\u{259C}', '\u{259B}', '\u{2588}',
+];
+
+/// Renders `text` as crisp quadrant-block glyphs.
 ///
 /// `color_at(t)` gives the color for horizontal position `t` in 0..=1 across
 /// the block, so gradients come for free. Glyph indices listed in
@@ -460,13 +477,14 @@ pub fn render(
     if n == 0 {
         return Vec::new();
     }
-    let total_w = width_of(n, h);
-    let px_h = h.ceil() as usize;
+    let cols = width_of(n, h);
     let rows = height_of(h);
+    // Two sub-pixels per cell on each axis.
+    let sub_cols = cols * 2;
+    let sub_rows = rows * 2;
     let r = STROKE_W * h / 2.0;
     let r2 = r * r;
 
-    // Flatten every glyph once, tagged with the column span it can touch.
     let mut shapes: Vec<Shape> = Vec::new();
     for (i, c) in text.chars().enumerate() {
         if blink_mask.get(i).copied().unwrap_or(false) {
@@ -477,26 +495,30 @@ pub fn render(
         if segs.is_empty() && dots.is_empty() {
             continue;
         }
-        let lo = (x0 - r).floor().max(0.0) as usize;
-        let hi = ((x0 + GLYPH_W * h + r).ceil() as usize).min(total_w);
+        // Sub-column range this glyph can possibly touch.
+        let lo = (((x0 - r) / 0.5).floor().max(0.0)) as usize;
+        let hi = ((((x0 + GLYPH_W * h + r) / 0.5).ceil() as usize) + 1).min(sub_cols);
         shapes.push((lo, hi, segs, dots));
     }
 
-    let mut on = vec![false; total_w * px_h];
+    let mut on = vec![false; sub_cols * sub_rows];
+    let dot_r2 = (r * 1.35).powi(2);
     for (lo, hi, segs, dots) in &shapes {
-        for py in 0..px_h {
-            let fy = py as f64 + 0.5;
-            for px in *lo..*hi {
-                let idx = py * total_w + px;
+        for iy in 0..sub_rows {
+            // Sub-rows are one unit tall, sub-columns half a unit wide.
+            let fy = iy as f64 + 0.5;
+            for ix in *lo..*hi {
+                let idx = iy * sub_cols + ix;
                 if on[idx] {
                     continue;
                 }
-                let fx = px as f64 + 0.5;
-                let hit = dots.iter().any(|&(dx, dy)| {
-                    (fx - dx).powi(2) + (fy - dy).powi(2) <= (r * 1.35).powi(2)
-                }) || segs
+                let fx = ix as f64 * 0.5 + 0.25;
+                let hit = dots
                     .iter()
-                    .any(|&(x1, y1, x2, y2)| dist2_seg(fx, fy, x1, y1, x2, y2) <= r2);
+                    .any(|&(dx, dy)| (fx - dx).powi(2) + (fy - dy).powi(2) <= dot_r2)
+                    || segs
+                        .iter()
+                        .any(|&(x1, y1, x2, y2)| dist2_seg(fx, fy, x1, y1, x2, y2) <= r2);
                 if hit {
                     on[idx] = true;
                 }
@@ -504,24 +526,23 @@ pub fn render(
         }
     }
 
-    let denom = (total_w.max(2) - 1) as f64;
+    let denom = (cols.max(2) - 1) as f64;
     let mut lines: Vec<OutLine> = Vec::with_capacity(rows);
     for row in 0..rows {
-        let (ty, by) = (row * 2, row * 2 + 1);
         let mut line: OutLine = Vec::new();
-        for x in 0..total_w {
-            let top = on[ty * total_w + x];
-            let bot = by < px_h && on[by * total_w + x];
-            let c = color_at(x as f64 / denom);
-
-            // Both halves of a cell share a column, so they share a gradient
-            // color — a solid block is enough and no background is needed.
-            let ch = match (top, bot) {
-                (false, false) => ' ',
-                (true, false) => '\u{2580}',
-                (false, true) => '\u{2584}',
-                (true, true) => '\u{2588}',
+        for col in 0..cols {
+            let at = |iy: usize, ix: usize| -> usize {
+                if iy < sub_rows && ix < sub_cols && on[iy * sub_cols + ix] {
+                    1
+                } else {
+                    0
+                }
             };
+            let (iy, ix) = (row * 2, col * 2);
+            let key = at(iy, ix) << 3 | at(iy, ix + 1) << 2 | at(iy + 1, ix) << 1 | at(iy + 1, ix + 1);
+            let ch = QUADRANTS[key];
+            let c = color_at(col as f64 / denom);
+
             match line.last_mut() {
                 Some(last) if last.color == c => last.text.push(ch),
                 _ => line.push(span(ch.to_string(), c)),
@@ -536,11 +557,24 @@ pub fn render(
 mod tests {
     use super::*;
 
+    /// Prints a whole word, to check spacing and that neighbouring glyphs
+    /// don't collide: `cargo test word_shape -- --nocapture`
+    #[test]
+    fn word_shape() {
+        for word in ["PAST", "QUARTER", "12:48:07"] {
+            println!("=== {word} ===");
+            for l in render(word, 20.0, &[], &|_| Color::White) {
+                let text: String = l.iter().map(|s| s.text.as_str()).collect();
+                println!("{}", text.trim_end());
+            }
+        }
+    }
+
     /// Prints each glyph on its own so shapes can be eyeballed:
     /// `cargo test glyph_shapes -- --nocapture`
     #[test]
     fn glyph_shapes() {
-        for c in "0123456789".chars() {
+        for c in "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ".chars() {
             println!("=== {c} ===");
             for l in render(&c.to_string(), 28.0, &[], &|_| Color::White) {
                 let text: String = l.iter().map(|s| s.text.as_str()).collect();

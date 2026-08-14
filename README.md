@@ -138,11 +138,15 @@ Every setting also has a matching `--flag` for one-off overrides — see
 Glyphs are not a scaled-up pixel grid. Each digit and letter is described as
 vector strokes — straight segments and elliptical arcs of constant width with
 round caps, in the spirit of a light geometric sans — so the letterforms stay
-true at any size. Strokes are rasterized at sub-cell resolution and drawn with
-half-block characters, giving two square pixels per terminal cell.
+true at any size.
 
-Edges are deliberately hard: blending partial coverage toward the background
-reads as a grey halo around the strokes rather than as smoothing.
+Strokes are rasterized at sub-cell resolution and drawn with quadrant block
+characters. All sixteen combinations of a 2x2 split exist in Unicode, so every
+terminal cell carries four sub-pixels; half-blocks alone would subdivide only
+vertically and leave curves visibly stepped along the horizontal axis.
+
+Edges are hard rather than anti-aliased: blending partial coverage toward the
+background reads as a grey halo around the strokes rather than as smoothing.
 
 ## Why it's lightweight
 
