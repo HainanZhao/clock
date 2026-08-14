@@ -248,6 +248,17 @@ fn draw(out: &mut Stdout, cfg: &Config) -> Result<()> {
     let lines = render_face(cfg.face, now, cfg, term_w as usize, avail_h);
     draw_block(out, term_w, avail_h as u16, &lines)?;
 
+    // The row between the clock area and the status line is nobody's, so
+    // blank it too rather than leaving whatever was there last frame.
+    for row in avail_h..term_h.saturating_sub(1) as usize {
+        queue!(
+            out,
+            MoveTo(0, row as u16),
+            ResetColor,
+            Print(" ".repeat(term_w as usize))
+        )?;
+    }
+
     draw_status(out, term_w, term_h)?;
     Ok(())
 }
@@ -280,22 +291,48 @@ fn draw_status(out: &mut Stdout, term_w: u16, term_h: u16) -> Result<()> {
 }
 
 /// Centers a block of styled lines in the given area and prints it.
+///
+/// Every cell of the area is written every frame, including the blank ones.
+/// Painting only the glyphs would leave the previous frame behind wherever
+/// the block shrank or shifted — the block is centered, so any change in its
+/// width or height (a shorter word-clock phrase, a bar value going 9 -> 10,
+/// the am/pm tag appearing) moves it and strands the old pixels.
 fn draw_block(out: &mut Stdout, area_w: u16, area_h: u16, lines: &[Line]) -> Result<()> {
-    let block_w = render::block_width(lines);
-    let block_h = lines.len();
-    let start_row = area_h.saturating_sub(block_h as u16) / 2;
-    let start_col = area_w.saturating_sub(block_w as u16) / 2;
+    let aw = area_w as usize;
+    let ah = area_h as usize;
+    let block_w = render::block_width(lines).min(aw);
+    let block_h = lines.len().min(ah);
+    let start_row = (ah - block_h) / 2;
+    let start_col = (aw - block_w) / 2;
 
-    for (i, l) in lines.iter().enumerate() {
-        if i as u16 >= area_h {
-            break;
-        }
-        let pad = block_w.saturating_sub(render::line_width(l)) / 2;
-        queue!(out, MoveTo(start_col + pad as u16, start_row + i as u16))?;
+    for row in 0..ah {
+        queue!(out, MoveTo(0, row as u16), ResetColor)?;
+
+        let line = row
+            .checked_sub(start_row)
+            .filter(|i| *i < block_h)
+            .map(|i| &lines[i]);
+
+        let Some(l) = line else {
+            queue!(out, Print(" ".repeat(aw)))?;
+            continue;
+        };
+
+        let lw = render::line_width(l).min(block_w);
+        let left = start_col + (block_w - lw) / 2;
+        queue!(out, Print(" ".repeat(left)))?;
+
+        let mut used = 0usize;
         for s in l {
-            queue!(out, SetForegroundColor(s.color), Print(&s.text))?;
+            let room = aw - left - used;
+            if room == 0 {
+                break;
+            }
+            let text: String = s.text.chars().take(room).collect();
+            used += text.chars().count();
+            queue!(out, SetForegroundColor(s.color), Print(&text))?;
         }
-        queue!(out, ResetColor)?;
+        queue!(out, ResetColor, Print(" ".repeat(aw - left - used)))?;
     }
     Ok(())
 }
@@ -375,21 +412,35 @@ fn draw_picker(out: &mut Stdout, cfg: &Config, selected: usize) -> Result<()> {
 
         draw_box(out, x0, y0, box_w, box_h, border)?;
 
+        // Previews are live, so their size changes as the time does. Write
+        // the whole cell interior every frame or the last frame shows through.
         let lines = mini_render(*face, now, cfg, cell_w as usize, cell_h as usize);
-        let shown = lines.len().min(cell_h as usize);
-        let top_pad = (cell_h as usize).saturating_sub(shown) / 2;
-        let inner_w = render::block_width(&lines).min(cell_w as usize);
+        let cw = cell_w as usize;
+        let chh = cell_h as usize;
+        let shown = lines.len().min(chh);
+        let top_pad = (chh - shown) / 2;
+        let inner_w = render::block_width(&lines).min(cw);
 
-        for (ri, l) in lines.iter().take(shown).enumerate() {
-            let pad = (cell_w as usize).saturating_sub(inner_w) / 2
-                + inner_w.saturating_sub(render::line_width(l)) / 2;
-            queue!(
-                out,
-                MoveTo(x0 + 1 + pad as u16, y0 + 1 + (top_pad + ri) as u16)
-            )?;
+        for ri in 0..chh {
+            queue!(out, MoveTo(x0 + 1, y0 + 1 + ri as u16), ResetColor)?;
+
+            let line = ri
+                .checked_sub(top_pad)
+                .filter(|i| *i < shown)
+                .map(|i| &lines[i]);
+
+            let Some(l) = line else {
+                queue!(out, Print(" ".repeat(cw)))?;
+                continue;
+            };
+
+            let lw = render::line_width(l).min(inner_w);
+            let left = (cw - inner_w) / 2 + (inner_w - lw) / 2;
+            queue!(out, Print(" ".repeat(left)))?;
+
             let mut used = 0usize;
             for s in l {
-                let room = (cell_w as usize).saturating_sub(pad + used);
+                let room = cw - left - used;
                 if room == 0 {
                     break;
                 }
@@ -397,7 +448,7 @@ fn draw_picker(out: &mut Stdout, cfg: &Config, selected: usize) -> Result<()> {
                 used += text.chars().count();
                 queue!(out, SetForegroundColor(s.color), Print(&text))?;
             }
-            queue!(out, ResetColor)?;
+            queue!(out, ResetColor, Print(" ".repeat(cw - left - used)))?;
         }
 
         let label = face.to_string().to_uppercase();
