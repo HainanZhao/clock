@@ -194,9 +194,10 @@ fn set_field(cfg: &mut Config, key: &str, value: &str) -> Result<()> {
                 "radar" => Face::Radar,
                 "ship" => Face::Ship,
                 "grid" => Face::Grid,
+                "warp" => Face::Warp,
                 other => bail!(
                     "unknown face '{other}' (expected one of: digital, analog, binary, word, \
-                     matrix, flip, waves, rings, roman, lcd, hourglass, blocks, cuckoo, radar, ship, grid)"
+                     matrix, flip, waves, rings, roman, lcd, hourglass, blocks, cuckoo, radar, ship, grid, warp)"
                 ),
             }
         }

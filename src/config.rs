@@ -29,6 +29,7 @@ pub enum Face {
     Radar,
     Ship,
     Grid,
+    Warp,
 }
 
 impl<'de> Deserialize<'de> for Face {
@@ -54,6 +55,7 @@ impl<'de> Deserialize<'de> for Face {
             "radar" => Face::Radar,
             "ship" => Face::Ship,
             "grid" => Face::Grid,
+            "warp" => Face::Warp,
             _ => Face::Digital, // Fallback to the first clock face if variant is unknown
         })
     }
@@ -61,7 +63,7 @@ impl<'de> Deserialize<'de> for Face {
 
 impl Face {
     /// All faces, in the order they're cycled through and shown in the picker grid.
-    pub const ALL: [Face; 16] = [
+    pub const ALL: [Face; 17] = [
         Face::Digital,
         Face::Analog,
         Face::Binary,
@@ -78,6 +80,7 @@ impl Face {
         Face::Radar,
         Face::Ship,
         Face::Grid,
+        Face::Warp,
     ];
 
     fn index(self) -> usize {
@@ -112,6 +115,7 @@ impl fmt::Display for Face {
             Face::Radar => write!(f, "radar"),
             Face::Ship => write!(f, "ship"),
             Face::Grid => write!(f, "grid"),
+            Face::Warp => write!(f, "warp"),
         }
     }
 }

@@ -1,6 +1,6 @@
 # clock
 
-A beautiful, configurable clock for your terminal with 16 faces — written in
+A beautiful, configurable clock for your terminal with multiple gorgeous faces — written in
 Rust, ships as a single lightweight binary, idles at ~0% CPU.
 
 ```
@@ -41,6 +41,7 @@ Rust, ships as a single lightweight binary, idles at ~0% CPU.
 | `radar`   | Aviation/marine radar screen with rotating sweep and target blips |
 | `ship`    | Maritime ship steering wheel with an elegant analog dial in the center |
 | `grid`    | Retro 3x5 block matrix digits rendered using solid square blocks ■ |
+| `warp`    | Star Trek warp-speed time travel effect, zooming in to the center |
 
 Switch faces live with the Left/Right arrow keys, or press `Tab` for a
 picker grid showing a live preview of every face at once.
@@ -119,7 +120,7 @@ clock config reset             # back to defaults
 Config file (created on first `config set`, edit by hand too):
 
 ```toml
-face = "digital"          # digital, analog, binary, word, matrix, flip, waves, rings, roman, lcd, hourglass, blocks, cuckoo, radar, ship, grid
+face = "digital"          # digital, analog, binary, word, matrix, flip, waves, rings, roman, lcd, hourglass, blocks, cuckoo, radar, ship, grid, warp
 hour12 = true             # 12h with am/pm, or false for 24h
 show_seconds = true
 show_date = true

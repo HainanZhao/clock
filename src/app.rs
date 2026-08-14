@@ -101,7 +101,7 @@ fn persist_session(before: &Config, after: &Config) {
 fn next_wake(cfg: &Config, now: DateTime<Local>) -> Duration {
     let animated = matches!(
         cfg.face,
-        Face::Analog | Face::Rings | Face::Hourglass | Face::Cuckoo | Face::Radar | Face::Ship
+        Face::Analog | Face::Rings | Face::Hourglass | Face::Cuckoo | Face::Radar | Face::Ship | Face::Warp
     );
     let blinks = cfg.blink_colon && matches!(cfg.face, Face::Digital | Face::Matrix | Face::Flip | Face::Lcd | Face::Grid);
     let period_ms: i64 = if blinks {
@@ -330,6 +330,7 @@ fn render_face(face: Face, now: DateTime<Local>, cfg: &Config, w: usize, h: usiz
         Face::Radar => faces::radar::render(now, cfg, w, h),
         Face::Ship => faces::ship::render(now, cfg, w, h),
         Face::Grid => faces::grid::render(now, cfg, w, h),
+        Face::Warp => faces::warp::render(now, cfg, w, h),
     }
 }
 
