@@ -99,19 +99,30 @@ A standard terminal character cell is roughly twice as tall as it is wide (a 1:2
 
 ---
 
-## 6. Asynchronous Background Integration & Alert Flashing (`calendar.rs`)
-* **Background Thread State-Sharing**: Never block the main clock draw/tick thread with synchronous network requests (such as querying Google Calendar API). Instead:
-  * Spawn a **lightweight background worker thread** on startup when `--calendar` is enabled.
-  * Share fetched events safely using an `Arc<Mutex<Vec<CalendarEvent>>>`.
-  * Periodically poll (e.g. every 30 seconds) in the background and swap out the shared event vector.
-* **Full-Terminal Background Flashing**: To trigger the immersive red background flash (1 minute before any event), check the current time against the loaded events list in the central `draw` function. If it falls in the 1-minute window and the seconds are even:
-    * Set the drawing background color (`bg_color`) to `Color::Red`.
-    * Temporarily clone the `Config` and overwrite the theme colors to `"black"`. This creates a beautiful, ultra-high-contrast alarm state (black digits/hands on a solid bright-red background) across **all 16 clock faces automatically**!
-    * Update `draw_block` and `draw_status` to accept the `bg` color argument and render their spacing, margins, borders, and empty padding regions with the active background color (using `SetBackgroundColor(bg)`), ensuring the entire terminal window is filled with solid red.
+## 6. Lightweight Dependency-Free Alarm System & Visual Alerts (`config.rs` and `app.rs`)
+* **Solid, 100% Dependency-Free Alarms**: Avoid heavy asynchronous, networking-based integration components (such as Google Calendar fetching over HTTPS) for simple terminal clocks. Instead:
+  * Implement local, highly performant, and 100% dependency-free alarm matching on the main drawing thread.
+  * Define an `alarm: Option<String>` field in the configuration file, structured in standard `"HH:MM"` 24-hour format.
+  * On every frame, perform a simple, CPU-efficient comparison of the current formatted time against the resolved alarm string:
+    ```rust
+    let in_alarm_minute = if let Some(alarm_time) = cfg.resolve_alarm() {
+        now.format("%H:%M").to_string() == alarm_time
+    } else {
+        false
+    };
+    ```
+* **Full-Terminal Background Flashing**: If `in_alarm_minute` is true and the current second count is even:
+    * Override the active terminal drawing background color (`bg_color`) to `Color::Red`.
+    * Temporarily clone the configuration and override the display colors to `"black"`. This instantly creates a gorgeous, ultra-high-contrast alarm state (black digits/hands on a solid bright-red background) across **all clock faces automatically!**
+    * Update `draw_block` and `draw_status` to render their spacing, margins, borders, and empty padding regions with the active background color (using `SetBackgroundColor(bg)`), ensuring the entire terminal window is filled with solid red.
+* **Auto-Waking Animation Loop**: To ensure that the alert pulses cleanly second-by-second (even when seconds are hidden and the clock would naturally sleep for 60 seconds), force the event loop to wake up and refresh exactly once per second when `in_alarm_minute` is active:
+  ```rust
+  let period_ms: i64 = if in_alarm_minute {
+      1000 // Pulse smoothly every second during the alarm!
+  } else { ... }
+  ```
 * **Procedural Wave Rendering (`waves.rs`)**: Draw gorgeous, continuous sine/cosine waves by mapping standard-width Braille sub-pixel grids. To represent hours, minutes, and seconds as flowing visual waveforms:
   * Overlap multiple distinct waves of different frequencies, amplitudes, and phases on a single canvas, and overlay a beautifully bordered bottom-aligned text card to house the digital time readout cleanly at the bottom (`let card_top = rows.saturating_sub(card_h)`).
-* **First-Run Mock UX**: Always provide a default `mock_mode: true` fallback in the calendar JSON configuration so the feature is **fully testable immediately out of the box** (e.g. dynamically injecting a demo event starting in 65 seconds), bypassing the friction of Google Developer API key provisioning.
-* **Time-Window Unit Testing**: Write unit tests comparing mock timestamps offset from `Local::now()` by varying durations (e.g. +45s, +60s, +75s, -10s) to verify exact boundary behavior of alert triggers under test.
 
 ---
 

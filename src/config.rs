@@ -186,6 +186,8 @@ pub struct Config {
     /// :00, :05, :10 and so on, which calms faces whose glyphs change width.
     #[serde(default = "default_second_step")]
     pub second_step: u32,
+    /// Optional alarm time in "HH:MM" format (24-hour).
+    pub alarm: Option<String>,
 }
 
 impl Default for Config {
@@ -202,11 +204,26 @@ impl Default for Config {
             accent_color: default_accent(),
             ghost_segments: false,
             second_step: default_second_step(),
+            alarm: None,
         }
     }
 }
 
 impl Config {
+    /// Resolves the alarm setting, returning Some(HH:MM) if validly configured, or None.
+    pub fn resolve_alarm(&self) -> Option<String> {
+        let val = self.alarm.as_ref()?;
+        if val.is_empty() || val.to_ascii_lowercase() == "none" {
+            return None;
+        }
+        // Verify format is roughly "HH:MM" (e.g. length 5 and contains ':')
+        if val.len() == 5 && val.contains(':') {
+            Some(val.clone())
+        } else {
+            None
+        }
+    }
+
     /// Where the config file lives on this platform.
     pub fn path() -> Result<PathBuf> {
         let dir = dirs::config_dir().context("could not determine the platform config directory")?;

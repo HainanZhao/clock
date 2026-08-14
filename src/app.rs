@@ -5,7 +5,7 @@ use crate::config::{Config, Face, MAX_SCALE};
 use crate::faces;
 use crate::render::{self, Line};
 use anyhow::Result;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Timelike};
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, EnableMouseCapture, DisableMouseCapture};
 use crossterm::style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor};
@@ -92,7 +92,15 @@ fn next_wake(cfg: &Config, now: DateTime<Local>) -> Duration {
         return Duration::from_millis(16);
     }
 
-    let period_ms: i64 = if blinks {
+    let in_alarm_minute = if let Some(alarm_time) = cfg.resolve_alarm() {
+        now.format("%H:%M").to_string() == alarm_time
+    } else {
+        false
+    };
+
+    let period_ms: i64 = if in_alarm_minute {
+        1000 // Pulse smoothly every second during the alarm!
+    } else if blinks {
         500
     } else if cfg.show_seconds || animated {
         1000
@@ -333,8 +341,23 @@ fn draw(out: &mut Stdout, cfg: &Config) -> Result<()> {
     let now = Local::now();
     let avail_h = term_h.saturating_sub(CHROME_H) as usize;
 
-    let lines = render_face(cfg.face, now, cfg, term_w as usize, avail_h);
-    draw_block(out, term_w, avail_h as u16, &lines, Color::Reset)?;
+    let in_alarm_minute = if let Some(alarm_time) = cfg.resolve_alarm() {
+        now.format("%H:%M").to_string() == alarm_time
+    } else {
+        false
+    };
+
+    let mut current_cfg = cfg.clone();
+    let mut bg_color = Color::Reset;
+
+    if in_alarm_minute && now.second() % 2 == 0 {
+        bg_color = Color::Red;
+        current_cfg.color = "black".to_string();
+        current_cfg.accent_color = "black".to_string();
+    }
+
+    let lines = render_face(current_cfg.face, now, &current_cfg, term_w as usize, avail_h);
+    draw_block(out, term_w, avail_h as u16, &lines, bg_color)?;
 
     // The row between the clock area and the status line is nobody's, so
     // blank it too rather than leaving whatever was there last frame.
@@ -342,12 +365,12 @@ fn draw(out: &mut Stdout, cfg: &Config) -> Result<()> {
         queue!(
             out,
             MoveTo(0, row as u16),
-            SetBackgroundColor(Color::Reset),
+            SetBackgroundColor(bg_color),
             Print(" ".repeat(term_w as usize))
         )?;
     }
 
-    draw_status(out, term_w, term_h, Color::Reset)?;
+    draw_status(out, term_w, term_h, bg_color)?;
     Ok(())
 }
 

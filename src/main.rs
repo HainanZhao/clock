@@ -54,10 +54,16 @@ struct Overrides {
     /// Clock size: 0 auto-fills the terminal, 1-9 pins a size.
     #[arg(long)]
     scale: Option<u8>,
+    /// Optional alarm time in "HH:MM" format (24-hour).
+    #[arg(long)]
+    alarm: Option<String>,
 }
 
 impl Overrides {
     fn apply(&self, mut cfg: Config) -> Config {
+        if let Some(alarm) = &self.alarm {
+            cfg.alarm = Some(alarm.clone());
+        }
         if let Some(face) = self.face {
             cfg.face = face;
         }
@@ -197,6 +203,18 @@ fn set_field(cfg: &mut Config, key: &str, value: &str) -> Result<()> {
         "blink_colon" => cfg.blink_colon = parse_bool(value)?,
         "tick_marks" => cfg.tick_marks = parse_bool(value)?,
         "ghost_segments" => cfg.ghost_segments = parse_bool(value)?,
+        "alarm" => {
+            if value.to_ascii_lowercase() == "none" || value.is_empty() {
+                cfg.alarm = None;
+            } else {
+                // Validate alarm is roughly "HH:MM"
+                if value.len() == 5 && value.contains(':') {
+                    cfg.alarm = Some(value.to_string());
+                } else {
+                    bail!("alarm must be in \"HH:MM\" 24-hour format (or \"none\" to disable)");
+                }
+            }
+        }
         "second_step" => {
             cfg.second_step = value
                 .parse::<u32>()
@@ -213,7 +231,7 @@ fn set_field(cfg: &mut Config, key: &str, value: &str) -> Result<()> {
         "accent_color" => cfg.accent_color = value.to_string(),
         other => bail!(
             "unknown key '{other}' (expected one of: face, hour12, show_seconds, show_date, \
-             blink_colon, tick_marks, ghost_segments, second_step, scale, color, \
+             blink_colon, tick_marks, ghost_segments, alarm, second_step, scale, color, \
              accent_color)"
         ),
     }
