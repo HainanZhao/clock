@@ -4,16 +4,14 @@ use crate::color;
 use crate::config::{Config, Face, MAX_SCALE};
 use crate::faces;
 use crate::render::{self, Line};
-use crate::calendar::{CalendarEvent, CalendarConfig};
 use anyhow::Result;
-use chrono::{DateTime, Local, Timelike};
+use chrono::{DateTime, Local};
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, EnableMouseCapture, DisableMouseCapture};
 use crossterm::style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor};
 use crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{execute, queue};
 use std::io::{Stdout, Write};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const HELP_ITEMS: &[&str] = &[
@@ -33,28 +31,11 @@ const CHROME_H: u16 = 2;
 pub fn run(mut cfg: Config) -> Result<()> {
     let started_with = cfg.clone();
 
-    let calendar_events = Arc::new(Mutex::new(Vec::<CalendarEvent>::new()));
-
-    if cfg.calendar {
-        let events_clone = Arc::clone(&calendar_events);
-        std::thread::spawn(move || {
-            let cal_cfg = CalendarConfig::load_or_create();
-            loop {
-                let now = chrono::Local::now();
-                let fetched = crate::calendar::get_events(&cal_cfg, now);
-                if let Ok(mut guard) = events_clone.lock() {
-                    *guard = fetched;
-                }
-                std::thread::sleep(std::time::Duration::from_secs(30));
-            }
-        });
-    }
-
     terminal::enable_raw_mode()?;
     let mut out = std::io::stdout();
     execute!(out, EnterAlternateScreen, Hide, EnableMouseCapture)?;
 
-    let result = event_loop(&mut out, &mut cfg, &calendar_events);
+    let result = event_loop(&mut out, &mut cfg);
 
     execute!(out, Show, LeaveAlternateScreen, DisableMouseCapture)?;
     terminal::disable_raw_mode()?;
@@ -141,7 +122,7 @@ fn move_selection(selected: usize, dcol: i32, drow: i32) -> usize {
     }
 }
 
-fn event_loop(out: &mut Stdout, cfg: &mut Config, events: &Arc<Mutex<Vec<CalendarEvent>>>) -> Result<()> {
+fn event_loop(out: &mut Stdout, cfg: &mut Config) -> Result<()> {
     let mut needs_clear = true;
     let mut picker: Option<usize> = None;
 
@@ -152,7 +133,7 @@ fn event_loop(out: &mut Stdout, cfg: &mut Config, events: &Arc<Mutex<Vec<Calenda
         }
         match picker {
             Some(selected) => draw_picker(out, cfg, selected)?,
-            None => draw(out, cfg, events)?,
+            None => draw(out, cfg)?,
         }
         out.flush()?;
 
@@ -341,7 +322,7 @@ fn render_face(face: Face, now: DateTime<Local>, cfg: &Config, w: usize, h: usiz
     }
 }
 
-fn draw(out: &mut Stdout, cfg: &Config, events: &Arc<Mutex<Vec<CalendarEvent>>>) -> Result<()> {
+fn draw(out: &mut Stdout, cfg: &Config) -> Result<()> {
     let (term_w, term_h) = terminal::size()?;
     if term_w < 20 || term_h < 6 {
         queue!(out, Clear(ClearType::All), MoveTo(0, 0))?;
@@ -352,26 +333,8 @@ fn draw(out: &mut Stdout, cfg: &Config, events: &Arc<Mutex<Vec<CalendarEvent>>>)
     let now = Local::now();
     let avail_h = term_h.saturating_sub(CHROME_H) as usize;
 
-    let mut current_cfg = cfg.clone();
-    let mut is_flashing = false;
-    if cfg.calendar {
-        if let Ok(guard) = events.lock() {
-            if crate::calendar::should_flash(now, &guard) {
-                is_flashing = true;
-            }
-        }
-    }
-
-    // Determine the terminal background color
-    let mut bg_color = Color::Reset;
-    if is_flashing && now.second() % 2 == 0 {
-        bg_color = Color::Red;
-        current_cfg.color = "black".to_string();
-        current_cfg.accent_color = "black".to_string();
-    }
-
-    let lines = render_face(current_cfg.face, now, &current_cfg, term_w as usize, avail_h);
-    draw_block(out, term_w, avail_h as u16, &lines, bg_color)?;
+    let lines = render_face(cfg.face, now, cfg, term_w as usize, avail_h);
+    draw_block(out, term_w, avail_h as u16, &lines, Color::Reset)?;
 
     // The row between the clock area and the status line is nobody's, so
     // blank it too rather than leaving whatever was there last frame.
@@ -379,12 +342,12 @@ fn draw(out: &mut Stdout, cfg: &Config, events: &Arc<Mutex<Vec<CalendarEvent>>>)
         queue!(
             out,
             MoveTo(0, row as u16),
-            SetBackgroundColor(bg_color),
+            SetBackgroundColor(Color::Reset),
             Print(" ".repeat(term_w as usize))
         )?;
     }
 
-    draw_status(out, term_w, term_h, bg_color)?;
+    draw_status(out, term_w, term_h, Color::Reset)?;
     Ok(())
 }
 

@@ -1,6 +1,5 @@
 mod app;
 mod braille;
-mod calendar;
 mod color;
 mod config;
 mod faces;
@@ -55,16 +54,10 @@ struct Overrides {
     /// Clock size: 0 auto-fills the terminal, 1-9 pins a size.
     #[arg(long)]
     scale: Option<u8>,
-    /// Enable Google Calendar integration and pre-event alert flashing.
-    #[arg(long)]
-    calendar: bool,
 }
 
 impl Overrides {
     fn apply(&self, mut cfg: Config) -> Config {
-        if self.calendar {
-            cfg.calendar = true;
-        }
         if let Some(face) = self.face {
             cfg.face = face;
         }
@@ -131,9 +124,6 @@ fn main() -> Result<()> {
     match cli.command {
         None | Some(Command::Run) => {
             let cfg = cli.overrides.apply(base);
-            if cfg.calendar {
-                let _ = calendar::init_integration();
-            }
             app::run(cfg)
         }
         Some(Command::Config { action }) => run_config(action, base),
@@ -207,7 +197,6 @@ fn set_field(cfg: &mut Config, key: &str, value: &str) -> Result<()> {
         "blink_colon" => cfg.blink_colon = parse_bool(value)?,
         "tick_marks" => cfg.tick_marks = parse_bool(value)?,
         "ghost_segments" => cfg.ghost_segments = parse_bool(value)?,
-        "calendar" => cfg.calendar = parse_bool(value)?,
         "second_step" => {
             cfg.second_step = value
                 .parse::<u32>()
@@ -224,7 +213,7 @@ fn set_field(cfg: &mut Config, key: &str, value: &str) -> Result<()> {
         "accent_color" => cfg.accent_color = value.to_string(),
         other => bail!(
             "unknown key '{other}' (expected one of: face, hour12, show_seconds, show_date, \
-             blink_colon, tick_marks, ghost_segments, calendar, second_step, scale, color, \
+             blink_colon, tick_marks, ghost_segments, second_step, scale, color, \
              accent_color)"
         ),
     }

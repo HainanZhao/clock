@@ -186,9 +186,6 @@ pub struct Config {
     /// :00, :05, :10 and so on, which calms faces whose glyphs change width.
     #[serde(default = "default_second_step")]
     pub second_step: u32,
-    /// Enable Google Calendar integration.
-    #[serde(default = "default_false")]
-    pub calendar: bool,
 }
 
 impl Default for Config {
@@ -205,7 +202,6 @@ impl Default for Config {
             accent_color: default_accent(),
             ghost_segments: false,
             second_step: default_second_step(),
-            calendar: false,
         }
     }
 }
