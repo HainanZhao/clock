@@ -52,11 +52,29 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
 
     // Roman numerals get long (XXXVIII), so each unit goes on its own line —
     // stacked they can be drawn much larger than one wide row would allow.
+    // Roman numerals for seconds change length constantly (VII, VIII, IX),
+    // so never step faster than five seconds here however `second_step` is
+    // set — otherwise the face churns.
+    let second = {
+        let step = cfg.second_step.max(5);
+        now.second() / step * step
+    };
+
     let mut parts = vec![to_roman(hour), to_roman(now.minute())];
     if cfg.show_seconds {
-        parts.push(to_roman(now.second()));
+        parts.push(to_roman(second));
     }
-    let longest = parts.iter().map(|p| p.chars().count()).max().unwrap_or(1);
+
+    // Size to the longest numeral any of these fields could ever produce, not
+    // to the current one. Sizing to the current value makes the cap height —
+    // and so the whole block — change from second to second, and a centered
+    // block that changes size jumps around the screen.
+    let hour_range = if cfg.hour12 { 1..=12 } else { 0..=23 };
+    let longest = hour_range
+        .map(|v| to_roman(v).chars().count())
+        .chain((0..60).map(|v| to_roman(v).chars().count()))
+        .max()
+        .unwrap_or(1);
 
     let mut reserved = 0;
     if cfg.hour12 {
@@ -84,6 +102,10 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
         let to = color::lerp(accent, primary, ramp + 0.4);
         lines.extend(vector::render(part, h, &[], &|t| color::lerp(from, to, t)));
     }
+
+    // Hold the block at the worst-case width so it stays put as the numerals
+    // change length.
+    lines = render::pad_to_width(lines, vector::width_of(longest, h));
 
     if cfg.hour12 {
         lines.push(render::blank());

@@ -3,6 +3,8 @@ pub mod bars;
 pub mod binary;
 pub mod digital;
 pub mod flip;
+pub mod hourglass;
+pub mod lcd;
 pub mod matrix;
 pub mod rings;
 pub mod roman;

@@ -63,3 +63,32 @@ pub fn gradient_block(lines: &[String], from: Color, to: Color) -> Vec<Line> {
         .collect()
 }
 
+
+/// Pads every line out to `width` with equal space either side.
+///
+/// Blocks are centered when drawn, so a block whose width changes with its
+/// content visibly shifts on screen. Pinning the width to the widest the
+/// content can ever be holds it still.
+pub fn pad_to_width(lines: Vec<Line>, width: usize) -> Vec<Line> {
+    lines
+        .into_iter()
+        .map(|l| {
+            let w = line_width(&l);
+            if w >= width {
+                return l;
+            }
+            let left = (width - w) / 2;
+            let right = width - w - left;
+            let color = l.first().map(|s| s.color).unwrap_or(Color::Reset);
+            let mut out: Line = Vec::new();
+            if left > 0 {
+                out.push(span(" ".repeat(left), color));
+            }
+            out.extend(l);
+            if right > 0 {
+                out.push(span(" ".repeat(right), color));
+            }
+            out
+        })
+        .collect()
+}

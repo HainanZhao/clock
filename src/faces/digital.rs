@@ -19,7 +19,7 @@ pub fn time_text(now: DateTime<Local>, cfg: &Config) -> (String, Vec<usize>, &'s
     let mut text = format!("{hour:02}:{:02}", now.minute());
     let mut colons = vec![2];
     if cfg.show_seconds {
-        text.push_str(&format!(":{:02}", now.second()));
+        text.push_str(&format!(":{:02}", cfg.step_second(now.second())));
         colons.push(5);
     }
     (text, colons, suffix)

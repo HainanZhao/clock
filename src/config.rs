@@ -23,11 +23,13 @@ pub enum Face {
     Bars,
     Rings,
     Roman,
+    Lcd,
+    Hourglass,
 }
 
 impl Face {
     /// All faces, in the order they're cycled through and shown in the picker grid.
-    pub const ALL: [Face; 9] = [
+    pub const ALL: [Face; 11] = [
         Face::Digital,
         Face::Analog,
         Face::Binary,
@@ -37,6 +39,8 @@ impl Face {
         Face::Bars,
         Face::Rings,
         Face::Roman,
+        Face::Lcd,
+        Face::Hourglass,
     ];
 
     fn index(self) -> usize {
@@ -64,12 +68,20 @@ impl fmt::Display for Face {
             Face::Bars => write!(f, "bars"),
             Face::Rings => write!(f, "rings"),
             Face::Roman => write!(f, "roman"),
+            Face::Lcd => write!(f, "lcd"),
+            Face::Hourglass => write!(f, "hourglass"),
         }
     }
 }
 
 fn default_true() -> bool {
     true
+}
+fn default_false() -> bool {
+    false
+}
+fn default_second_step() -> u32 {
+    1
 }
 /// 0 means "auto": grow the face to fill the terminal.
 fn default_scale() -> u8 {
@@ -119,6 +131,14 @@ pub struct Config {
     /// Accent color: blinking colon / clock hands.
     #[serde(default = "default_accent")]
     pub accent_color: String,
+    /// Show the unlit segments faintly on the `lcd` face, the way a real
+    /// panel does. Off by default — it reads as clutter at small sizes.
+    #[serde(default = "default_false")]
+    pub ghost_segments: bool,
+    /// Granularity of the displayed seconds. 1 counts every second; 5 shows
+    /// :00, :05, :10 and so on, which calms faces whose glyphs change width.
+    #[serde(default = "default_second_step")]
+    pub second_step: u32,
 }
 
 impl Default for Config {
@@ -133,6 +153,8 @@ impl Default for Config {
             scale: default_scale(),
             color: default_color(),
             accent_color: default_accent(),
+            ghost_segments: false,
+            second_step: default_second_step(),
         }
     }
 }
@@ -177,6 +199,12 @@ impl Config {
         } else {
             self.scale.min(MAX_SCALE) as usize
         }
+    }
+
+    /// Rounds a second count down to the configured step.
+    pub fn step_second(&self, s: u32) -> u32 {
+        let step = self.second_step.clamp(1, 60);
+        s / step * step
     }
 
     pub fn is_auto_scale(&self) -> bool {

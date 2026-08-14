@@ -176,9 +176,11 @@ fn set_field(cfg: &mut Config, key: &str, value: &str) -> Result<()> {
                 "bars" => Face::Bars,
                 "rings" => Face::Rings,
                 "roman" => Face::Roman,
+                "lcd" => Face::Lcd,
+                "hourglass" => Face::Hourglass,
                 other => bail!(
                     "unknown face '{other}' (expected one of: digital, analog, binary, word, \
-                     matrix, flip, bars, rings, roman)"
+                     matrix, flip, bars, rings, roman, lcd, hourglass)"
                 ),
             }
         }
@@ -187,6 +189,13 @@ fn set_field(cfg: &mut Config, key: &str, value: &str) -> Result<()> {
         "show_date" => cfg.show_date = parse_bool(value)?,
         "blink_colon" => cfg.blink_colon = parse_bool(value)?,
         "tick_marks" => cfg.tick_marks = parse_bool(value)?,
+        "ghost_segments" => cfg.ghost_segments = parse_bool(value)?,
+        "second_step" => {
+            cfg.second_step = value
+                .parse::<u32>()
+                .map_err(|_| anyhow::anyhow!("second_step must be a number 1-60"))?
+                .clamp(1, 60)
+        }
         "scale" => {
             cfg.scale = value
                 .parse::<u8>()
@@ -197,7 +206,8 @@ fn set_field(cfg: &mut Config, key: &str, value: &str) -> Result<()> {
         "accent_color" => cfg.accent_color = value.to_string(),
         other => bail!(
             "unknown key '{other}' (expected one of: face, hour12, show_seconds, show_date, \
-             blink_colon, tick_marks, scale, color, accent_color)"
+             blink_colon, tick_marks, ghost_segments, second_step, scale, color, \
+             accent_color)"
         ),
     }
     Ok(())

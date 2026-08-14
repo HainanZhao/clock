@@ -1,6 +1,6 @@
 # clock
 
-A beautiful, configurable clock for your terminal with 9 faces — written in
+A beautiful, configurable clock for your terminal with 11 faces — written in
 Rust, ships as a single lightweight binary, idles at ~0% CPU.
 
 ```
@@ -34,6 +34,8 @@ Rust, ships as a single lightweight binary, idles at ~0% CPU.
 | `bars`    | Horizontal progress bars through the hour, minute and second |
 | `rings`   | Concentric progress arcs, time in the middle                 |
 | `roman`   | Roman numerals, stacked and oversized                        |
+| `lcd`     | Thick seven-segment bars with solid corners                   |
+| `hourglass` | Sand draining through a glass, once per hour                |
 
 Switch faces live with the Left/Right arrow keys, or press `Tab` for a
 picker grid showing a live preview of every face at once.
@@ -117,6 +119,8 @@ show_seconds = true
 show_date = true
 blink_colon = true        # digital/matrix/flip: blink the ':' once a second
 tick_marks = true         # analog: hour tick marks around the rim
+second_step = 1           # 5 shows :00, :05, :10 ... instead of every second
+ghost_segments = false    # lcd: show the unlit segments faintly, panel-style
 scale = 0                 # 0 = auto-fill the terminal; 1-9 to pin a size
 color = "#38d9e8"         # primary color
 accent_color = "#3b82f6"  # gradient end / hands / accents
@@ -135,6 +139,7 @@ Every setting also has a matching `--flag` for one-off overrides — see
 
 ## Rendering
 
+
 Glyphs are not a scaled-up pixel grid. Each digit and letter is described as
 vector strokes — straight segments and elliptical arcs of constant width with
 round caps, in the spirit of a light geometric sans — so the letterforms stay
@@ -147,6 +152,12 @@ vertically and leave curves visibly stepped along the horizontal axis.
 
 Edges are hard rather than anti-aliased: blending partial coverage toward the
 background reads as a grey halo around the strokes rather than as smoothing.
+
+The `lcd` face swaps those curves for seven-segment bars, drawn as rectangles
+snapped to whole cells so that every covered cell is a full block and the
+corners come out solid. Its bars deliberately overlap where they meet — inset
+them to leave the gaps of a real panel and the digits fall apart into loose
+blocks at the sizes a terminal gives you.
 
 ## Why it's lightweight
 

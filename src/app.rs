@@ -77,7 +77,7 @@ fn persist_session(before: &Config, after: &Config) {
 /// a colon, every second to advance a seconds readout, or — with seconds
 /// hidden — only once a minute.
 fn next_wake(cfg: &Config, now: DateTime<Local>) -> Duration {
-    let blinks = cfg.blink_colon && matches!(cfg.face, Face::Digital | Face::Matrix | Face::Flip);
+    let blinks = cfg.blink_colon && matches!(cfg.face, Face::Digital | Face::Matrix | Face::Flip | Face::Lcd);
     let period_ms: i64 = if blinks {
         500
     } else if cfg.show_seconds {
@@ -232,6 +232,8 @@ fn render_face(face: Face, now: DateTime<Local>, cfg: &Config, w: usize, h: usiz
         Face::Bars => faces::bars::render(now, cfg, w, h),
         Face::Rings => faces::rings::render(now, cfg, w, h),
         Face::Roman => faces::roman::render(now, cfg, w, h),
+        Face::Lcd => faces::lcd::render(now, cfg, w, h),
+        Face::Hourglass => faces::hourglass::render(now, cfg, w, h),
     }
 }
 
