@@ -4,19 +4,22 @@ use crate::color;
 use crate::config::{Config, Face, MAX_SCALE};
 use crate::faces;
 use crate::render::{self, Line};
+use crate::calendar::{CalendarEvent, CalendarConfig};
 use anyhow::Result;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Timelike};
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use crossterm::style::{Color, Print, ResetColor, SetForegroundColor};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, EnableMouseCapture, DisableMouseCapture};
+use crossterm::style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor};
 use crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{execute, queue};
 use std::io::{Stdout, Write};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const HELP_ITEMS: &[&str] = &[
     "\u{2190}\u{2192} face",
     "tab picker",
+    "c color",
     "t 12/24h",
     "s seconds",
     "+/- size",
@@ -30,13 +33,30 @@ const CHROME_H: u16 = 2;
 pub fn run(mut cfg: Config) -> Result<()> {
     let started_with = cfg.clone();
 
+    let calendar_events = Arc::new(Mutex::new(Vec::<CalendarEvent>::new()));
+
+    if cfg.calendar {
+        let events_clone = Arc::clone(&calendar_events);
+        std::thread::spawn(move || {
+            let cal_cfg = CalendarConfig::load_or_create();
+            loop {
+                let now = chrono::Local::now();
+                let fetched = crate::calendar::get_events(&cal_cfg, now);
+                if let Ok(mut guard) = events_clone.lock() {
+                    *guard = fetched;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(30));
+            }
+        });
+    }
+
     terminal::enable_raw_mode()?;
     let mut out = std::io::stdout();
-    execute!(out, EnterAlternateScreen, Hide)?;
+    execute!(out, EnterAlternateScreen, Hide, EnableMouseCapture)?;
 
-    let result = event_loop(&mut out, &mut cfg);
+    let result = event_loop(&mut out, &mut cfg, &calendar_events);
 
-    execute!(out, Show, LeaveAlternateScreen)?;
+    execute!(out, Show, LeaveAlternateScreen, DisableMouseCapture)?;
     terminal::disable_raw_mode()?;
 
     // Whatever the user switched to during the session becomes the default
@@ -55,7 +75,8 @@ fn persist_session(before: &Config, after: &Config) {
     let changed = before.face != after.face
         || before.hour12 != after.hour12
         || before.show_seconds != after.show_seconds
-        || before.scale != after.scale;
+        || before.scale != after.scale
+        || before.color != after.color;
     if !changed {
         return;
     }
@@ -64,6 +85,7 @@ fn persist_session(before: &Config, after: &Config) {
         stored.hour12 = after.hour12;
         stored.show_seconds = after.show_seconds;
         stored.scale = after.scale;
+        stored.color = after.color.clone();
         let _ = stored.save();
     }
 }
@@ -77,10 +99,14 @@ fn persist_session(before: &Config, after: &Config) {
 /// a colon, every second to advance a seconds readout, or — with seconds
 /// hidden — only once a minute.
 fn next_wake(cfg: &Config, now: DateTime<Local>) -> Duration {
-    let blinks = cfg.blink_colon && matches!(cfg.face, Face::Digital | Face::Matrix | Face::Flip | Face::Lcd);
+    let animated = matches!(
+        cfg.face,
+        Face::Analog | Face::Rings | Face::Hourglass | Face::Cuckoo | Face::Radar | Face::Ship
+    );
+    let blinks = cfg.blink_colon && matches!(cfg.face, Face::Digital | Face::Matrix | Face::Flip | Face::Lcd | Face::Grid);
     let period_ms: i64 = if blinks {
         500
-    } else if cfg.show_seconds {
+    } else if cfg.show_seconds || animated {
         1000
     } else {
         60_000
@@ -108,7 +134,7 @@ fn move_selection(selected: usize, dcol: i32, drow: i32) -> usize {
     }
 }
 
-fn event_loop(out: &mut Stdout, cfg: &mut Config) -> Result<()> {
+fn event_loop(out: &mut Stdout, cfg: &mut Config, events: &Arc<Mutex<Vec<CalendarEvent>>>) -> Result<()> {
     let mut needs_clear = true;
     let mut picker: Option<usize> = None;
 
@@ -119,7 +145,7 @@ fn event_loop(out: &mut Stdout, cfg: &mut Config) -> Result<()> {
         }
         match picker {
             Some(selected) => draw_picker(out, cfg, selected)?,
-            None => draw(out, cfg)?,
+            None => draw(out, cfg, events)?,
         }
         out.flush()?;
 
@@ -165,6 +191,22 @@ fn event_loop(out: &mut Stdout, cfg: &mut Config) -> Result<()> {
                                 needs_clear = true;
                             }
                             KeyCode::Char('t') => cfg.hour12 = !cfg.hour12,
+                            KeyCode::Char('c') => {
+                                const PRESETS: &[&str] = &[
+                                    "#38d9e8", // Cyan
+                                    "#10b981", // Emerald Green
+                                    "#f59e0b", // Amber
+                                    "#ef4444", // Red
+                                    "#a855f7", // Purple
+                                    "#3b82f6", // Blue
+                                    "#ffffff", // White
+                                ];
+                                let cur_color = cfg.color.trim().to_ascii_lowercase();
+                                let idx = PRESETS.iter().position(|&p| p == cur_color).unwrap_or(0);
+                                let next_idx = (idx + 1) % PRESETS.len();
+                                cfg.color = PRESETS[next_idx].to_string();
+                                needs_clear = true;
+                            }
                             KeyCode::Char('s') => {
                                 cfg.show_seconds = !cfg.show_seconds;
                                 needs_clear = true;
@@ -185,6 +227,51 @@ fn event_loop(out: &mut Stdout, cfg: &mut Config) -> Result<()> {
                                 needs_clear = true;
                             }
                             _ => {}
+                        }
+                    }
+                }
+                Event::Mouse(mouse_event) => {
+                    if let Some(selected) = picker {
+                        if let event::MouseEventKind::Down(event::MouseButton::Left) = mouse_event.kind {
+                            let (term_w, term_h) = terminal::size()?;
+                            let n = Face::ALL.len();
+                            let grid_rows = n.div_ceil(PICKER_COLS);
+                            let gap_x: u16 = 2;
+                            let gap_y: u16 = 0;
+                            let label_h: u16 = 1;
+
+                            let box_w = ((term_w.saturating_sub(4) - gap_x * (PICKER_COLS as u16 - 1))
+                                / PICKER_COLS as u16)
+                                .clamp(16, 46);
+                            let box_h = ((term_h.saturating_sub(4)) / grid_rows as u16)
+                                .saturating_sub(label_h + gap_y)
+                                .clamp(6, 14);
+
+                            let total_w = PICKER_COLS as u16 * box_w + (PICKER_COLS as u16 - 1) * gap_x;
+                            let total_h = grid_rows as u16 * (box_h + label_h + gap_y);
+                            let start_col = term_w.saturating_sub(total_w) / 2;
+                            let start_row = term_h.saturating_sub(total_h + 1) / 2;
+
+                            let cx = mouse_event.column;
+                            let cy = mouse_event.row;
+
+                            for i in 0..n {
+                                let col = (i % PICKER_COLS) as u16;
+                                let row = (i / PICKER_COLS) as u16;
+                                let x0 = start_col + col * (box_w + gap_x);
+                                let y0 = start_row + row * (box_h + label_h + gap_y);
+
+                                if cx >= x0 && cx < x0 + box_w && cy >= y0 && cy < y0 + box_h + label_h {
+                                    if selected == i {
+                                        cfg.face = Face::ALL[i];
+                                        picker = None;
+                                        needs_clear = true;
+                                    } else {
+                                        picker = Some(i);
+                                    }
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -211,8 +298,9 @@ fn current_scale(cfg: &Config) -> Result<u8> {
     if cfg.show_date {
         reserved += 2;
     }
+    let fit_len = if cfg.show_seconds { text.chars().count() } else { text.chars().count() + 3 };
     let cap = crate::vector::fit_height(
-        text.chars().count(),
+        fit_len,
         w as usize,
         (h.saturating_sub(CHROME_H) as usize).saturating_sub(reserved),
         crate::config::MAX_CAP_PX,
@@ -222,6 +310,9 @@ fn current_scale(cfg: &Config) -> Result<u8> {
 }
 
 fn render_face(face: Face, now: DateTime<Local>, cfg: &Config, w: usize, h: usize) -> Vec<Line> {
+    let mut resolved_cfg = cfg.clone();
+    resolved_cfg.accent_color = cfg.resolve_accent();
+    let cfg = &resolved_cfg;
     match face {
         Face::Digital => faces::digital::render(now, cfg, w, h),
         Face::Analog => faces::analog::render(now, cfg, w, h),
@@ -229,16 +320,20 @@ fn render_face(face: Face, now: DateTime<Local>, cfg: &Config, w: usize, h: usiz
         Face::Word => faces::word::render(now, cfg, w, h),
         Face::Matrix => faces::matrix::render(now, cfg, w, h),
         Face::Flip => faces::flip::render(now, cfg, w, h),
-        Face::Bars => faces::bars::render(now, cfg, w, h),
+        Face::Waves => faces::waves::render(now, cfg, w, h),
         Face::Rings => faces::rings::render(now, cfg, w, h),
         Face::Roman => faces::roman::render(now, cfg, w, h),
         Face::Lcd => faces::lcd::render(now, cfg, w, h),
         Face::Hourglass => faces::hourglass::render(now, cfg, w, h),
         Face::Blocks => faces::blocks::render(now, cfg, w, h),
+        Face::Cuckoo => faces::cuckoo::render(now, cfg, w, h),
+        Face::Radar => faces::radar::render(now, cfg, w, h),
+        Face::Ship => faces::ship::render(now, cfg, w, h),
+        Face::Grid => faces::grid::render(now, cfg, w, h),
     }
 }
 
-fn draw(out: &mut Stdout, cfg: &Config) -> Result<()> {
+fn draw(out: &mut Stdout, cfg: &Config, events: &Arc<Mutex<Vec<CalendarEvent>>>) -> Result<()> {
     let (term_w, term_h) = terminal::size()?;
     if term_w < 20 || term_h < 6 {
         queue!(out, Clear(ClearType::All), MoveTo(0, 0))?;
@@ -248,8 +343,27 @@ fn draw(out: &mut Stdout, cfg: &Config) -> Result<()> {
 
     let now = Local::now();
     let avail_h = term_h.saturating_sub(CHROME_H) as usize;
-    let lines = render_face(cfg.face, now, cfg, term_w as usize, avail_h);
-    draw_block(out, term_w, avail_h as u16, &lines)?;
+
+    let mut current_cfg = cfg.clone();
+    let mut is_flashing = false;
+    if cfg.calendar {
+        if let Ok(guard) = events.lock() {
+            if crate::calendar::should_flash(now, &guard) {
+                is_flashing = true;
+            }
+        }
+    }
+
+    // Determine the terminal background color
+    let mut bg_color = Color::Reset;
+    if is_flashing && now.second() % 2 == 0 {
+        bg_color = Color::Red;
+        current_cfg.color = "black".to_string();
+        current_cfg.accent_color = "black".to_string();
+    }
+
+    let lines = render_face(current_cfg.face, now, &current_cfg, term_w as usize, avail_h);
+    draw_block(out, term_w, avail_h as u16, &lines, bg_color)?;
 
     // The row between the clock area and the status line is nobody's, so
     // blank it too rather than leaving whatever was there last frame.
@@ -257,18 +371,18 @@ fn draw(out: &mut Stdout, cfg: &Config) -> Result<()> {
         queue!(
             out,
             MoveTo(0, row as u16),
-            ResetColor,
+            SetBackgroundColor(bg_color),
             Print(" ".repeat(term_w as usize))
         )?;
     }
 
-    draw_status(out, term_w, term_h)?;
+    draw_status(out, term_w, term_h, bg_color)?;
     Ok(())
 }
 
 /// Centered hint bar on the bottom row. The row is cleared first so a wider
 /// previous frame can't leave characters stranded past the new text.
-fn draw_status(out: &mut Stdout, term_w: u16, term_h: u16) -> Result<()> {
+fn draw_status(out: &mut Stdout, term_w: u16, term_h: u16, bg: Color) -> Result<()> {
     let sep = "  \u{00b7}  ";
     let mut text = HELP_ITEMS.join(sep);
     if text.chars().count() > term_w as usize {
@@ -281,13 +395,15 @@ fn draw_status(out: &mut Stdout, term_w: u16, term_h: u16) -> Result<()> {
         }
     }
     let pad = (term_w as usize).saturating_sub(text.chars().count()) / 2;
+    let left_pad = " ".repeat(pad);
+    let right_pad = " ".repeat((term_w as usize).saturating_sub(pad + text.chars().count()));
+
     queue!(
         out,
         MoveTo(0, term_h.saturating_sub(1)),
-        Clear(ClearType::CurrentLine),
-        MoveTo(pad as u16, term_h.saturating_sub(1)),
+        SetBackgroundColor(bg),
         SetForegroundColor(Color::DarkGrey),
-        Print(&text),
+        Print(format!("{}{}{}", left_pad, text, right_pad)),
         ResetColor
     )?;
     Ok(())
@@ -300,7 +416,7 @@ fn draw_status(out: &mut Stdout, term_w: u16, term_h: u16) -> Result<()> {
 /// the block shrank or shifted — the block is centered, so any change in its
 /// width or height (a shorter word-clock phrase, a bar value going 9 -> 10,
 /// the am/pm tag appearing) moves it and strands the old pixels.
-fn draw_block(out: &mut Stdout, area_w: u16, area_h: u16, lines: &[Line]) -> Result<()> {
+fn draw_block(out: &mut Stdout, area_w: u16, area_h: u16, lines: &[Line], bg: Color) -> Result<()> {
     let aw = area_w as usize;
     let ah = area_h as usize;
     let block_w = render::block_width(lines).min(aw);
@@ -309,7 +425,7 @@ fn draw_block(out: &mut Stdout, area_w: u16, area_h: u16, lines: &[Line]) -> Res
     let start_col = (aw - block_w) / 2;
 
     for row in 0..ah {
-        queue!(out, MoveTo(0, row as u16), ResetColor)?;
+        queue!(out, MoveTo(0, row as u16), SetBackgroundColor(bg))?;
 
         let line = row
             .checked_sub(start_row)
@@ -333,10 +449,11 @@ fn draw_block(out: &mut Stdout, area_w: u16, area_h: u16, lines: &[Line]) -> Res
             }
             let text: String = s.text.chars().take(room).collect();
             used += text.chars().count();
-            queue!(out, SetForegroundColor(s.color), Print(&text))?;
+            queue!(out, SetForegroundColor(s.color), SetBackgroundColor(bg), Print(&text))?;
         }
-        queue!(out, ResetColor, Print(" ".repeat(aw - left - used)))?;
+        queue!(out, SetBackgroundColor(bg), Print(" ".repeat(aw - left - used)))?;
     }
+    queue!(out, ResetColor)?;
     Ok(())
 }
 
@@ -382,7 +499,7 @@ fn draw_box(out: &mut Stdout, x0: u16, y0: u16, w: u16, h: u16, color: Color) ->
 fn draw_picker(out: &mut Stdout, cfg: &Config, selected: usize) -> Result<()> {
     let (term_w, term_h) = terminal::size()?;
     let now = Local::now();
-    let accent = color::parse(&cfg.accent_color);
+    let accent = color::parse(&cfg.resolve_accent());
 
     let n = Face::ALL.len();
     let grid_rows = n.div_ceil(PICKER_COLS);

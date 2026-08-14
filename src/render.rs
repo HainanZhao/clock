@@ -30,7 +30,11 @@ pub fn blank() -> Line {
 }
 
 pub fn line_width(l: &Line) -> usize {
-    l.iter().map(|s| s.text.chars().count()).sum()
+    l.iter()
+        .map(|s| {
+            s.text.chars().map(|c| if c == '🐱' { 2 } else { 1 }).sum::<usize>()
+        })
+        .sum()
 }
 
 pub fn block_width(lines: &[Line]) -> usize {

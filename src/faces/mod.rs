@@ -1,12 +1,16 @@
 pub mod analog;
-pub mod bars;
 pub mod binary;
 pub mod blocks;
+pub mod cuckoo;
 pub mod digital;
 pub mod flip;
+pub mod grid;
 pub mod hourglass;
 pub mod lcd;
 pub mod matrix;
+pub mod radar;
 pub mod rings;
 pub mod roman;
+pub mod ship;
+pub mod waves;
 pub mod word;

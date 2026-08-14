@@ -35,12 +35,10 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
         ));
     }
 
-    let radius = (((avail_h.saturating_sub(extra.len())) as f64 / 2.0)
-        .min(avail_w as f64 / 4.0)
-        - 1.0)
-        .max(4.0);
+    let h = avail_h.saturating_sub(extra.len()) as f64;
+    let radius = ((h - 2.0).min(avail_w as f64 / 2.0 - 1.5)).max(4.0);
     let cols = (radius * 2.0 + 3.0).ceil() as usize;
-    let rows = (radius * 2.0 + 3.0).ceil() as usize;
+    let rows = (radius + 2.0).ceil() as usize;
 
     let hour_max = if cfg.hour12 { 12.0 } else { 24.0 };
     let h_frac = ((now.hour() as f64 % hour_max) + now.minute() as f64 / 60.0) / hour_max;
@@ -48,11 +46,11 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     let s_frac = now.second() as f64 / 60.0;
 
     // Outermost first so inner rings sit inside it.
-    let mut specs = vec![(s_frac, 1.00, color::hue(color::SECOND_HUE)), (m_frac, 0.74, color::hue(color::MINUTE_HUE))];
-    specs.push((h_frac, 0.48, color::hue(color::HOUR_HUE)));
-    if !cfg.show_seconds {
-        specs.remove(0);
-    }
+    let specs = vec![
+        (s_frac, 1.00, color::hue(color::SECOND_HUE)),
+        (m_frac, 0.74, color::hue(color::MINUTE_HUE)),
+        (h_frac, 0.48, color::hue(color::HOUR_HUE)),
+    ];
 
     let mut track_canvases = Vec::new();
     let mut arc_canvases = Vec::new();

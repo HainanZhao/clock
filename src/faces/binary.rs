@@ -32,12 +32,19 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     }
     let n = digits.len();
 
+    let bcd_height = |cell: usize| {
+        let dot_h = (cell + 1) / 2;
+        let gap_y = if dot_h > 1 { 1 } else { 0 };
+        4 * dot_h + 3 * gap_y
+    };
+
     // Grow dot spacing/size to use the available width, within reason.
     let reserved = if cfg.show_date { 4 } else { 2 };
-    let usable_h = avail_h.saturating_sub(reserved);
-    let max_by_w = if n > 0 { avail_w / (n * 2) } else { 1 };
-    let max_by_h = usable_h / 5;
-    let cell = cfg.resolve_scale(max_by_w.min(max_by_h).clamp(1, 6));
+    let fit = (1..=6)
+        .rev()
+        .find(|&c| (2 * n - 1) * c <= avail_w && bcd_height(c) + reserved <= avail_h)
+        .unwrap_or(1);
+    let cell = cfg.resolve_scale(fit);
     let dot_w = cell.max(1);
     let gap = dot_w;
 
@@ -72,23 +79,41 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     lines.push(header);
     lines.push(render::blank());
 
+    let dot_h = (dot_w + 1) / 2;
+    let gap_y = if dot_h > 1 { 1 } else { 0 };
+
     for row in 0..4 {
         let weight = 1 << (3 - row);
-        let mut l: Line = Vec::new();
-        for (i, d) in digits.iter().enumerate() {
-            if i > 0 {
-                l.push(span(" ".repeat(gap), off));
-            }
-            let lit = d & weight != 0;
-            let c = if lit {
-                group_color(groups[i])
-            } else {
-                color::dim(off, 0.55)
-            };
-            let ch = if lit { '\u{2588}' } else { '\u{00b7}' };
-            l.push(span(ch.to_string().repeat(dot_w), c));
+        if row > 0 && gap_y > 0 {
+            lines.push(render::blank());
         }
-        lines.push(l);
+        for sub_row in 0..dot_h {
+            let mut l: Line = Vec::new();
+            for (i, d) in digits.iter().enumerate() {
+                if i > 0 {
+                    l.push(span(" ".repeat(gap), off));
+                }
+                let lit = d & weight != 0;
+                let c = if lit {
+                    group_color(groups[i])
+                } else {
+                    color::dim(off, 0.55)
+                };
+                if lit {
+                    l.push(span("\u{2588}".repeat(dot_w), c));
+                } else {
+                    if sub_row == dot_h / 2 {
+                        let pad = dot_w / 2;
+                        let pad_after = dot_w - pad - 1;
+                        let cell_text = format!("{}{}{}", " ".repeat(pad), '\u{00b7}', " ".repeat(pad_after));
+                        l.push(span(cell_text, c));
+                    } else {
+                        l.push(span(" ".repeat(dot_w), c));
+                    }
+                }
+            }
+            lines.push(l);
+        }
     }
 
     if cfg.show_date {

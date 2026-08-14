@@ -8,10 +8,12 @@ use chrono::{DateTime, Local, Timelike};
 use std::f64::consts::TAU;
 
 /// Braille cells are twice as tall as they are wide relative to a terminal
-/// cell, so the radius in columns is doubled to keep the face round.
+/// cell. In sub-pixel space, cells are 2x4 dots, so sub-pixels are exactly
+/// square. To keep the face round and fill the terminal efficiently, the
+/// column radius is twice the row radius.
 fn radius_for(avail_w: usize, avail_h: usize, reserved: usize) -> f64 {
     let h = avail_h.saturating_sub(reserved) as f64;
-    ((h / 2.0).min(avail_w as f64 / 4.0) - 1.0).max(3.0)
+    ((h - 2.0).min(avail_w as f64 / 2.0 - 1.5)).max(3.0)
 }
 
 pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize) -> Vec<Line> {
@@ -34,7 +36,7 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
 
     let radius = radius_for(avail_w, avail_h, extra.len());
     let cols = (radius * 2.0 + 3.0).ceil() as usize;
-    let rows = (radius * 2.0 + 3.0).ceil() as usize;
+    let rows = (radius + 2.0).ceil() as usize;
     let mut face = Canvas::new(cols, rows);
     let mut hour_hand = Canvas::new(cols, rows);
     let mut min_hand = Canvas::new(cols, rows);
@@ -42,7 +44,7 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
 
     let cx = face.width_px() / 2.0;
     let cy = face.height_px() / 2.0;
-    let r = radius.min(cols.min(rows) as f64 / 2.0 - 1.0) * 2.0;
+    let r = radius * 2.0;
 
     face.circle(cx, cy, r);
     if cfg.tick_marks {
@@ -68,9 +70,7 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     let min_units = now.minute() as f64 + now.second() as f64 / 60.0;
     hand(&mut hour_hand, 0.50, hour_units, 12.0);
     hand(&mut min_hand, 0.78, min_units, 60.0);
-    if cfg.show_seconds {
-        hand(&mut sec_hand, 0.92, now.second() as f64, 60.0);
-    }
+    hand(&mut sec_hand, 0.92, now.second() as f64, 60.0);
 
     let face_l = face.lines();
     let hour_l = hour_hand.lines();

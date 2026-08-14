@@ -49,8 +49,9 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     if cfg.show_date {
         reserved += 2;
     }
+    let fit_len = if cfg.show_seconds { n } else { n + 3 };
     let h = cfg.resolve_height(vector::fit_height(
-        n,
+        fit_len,
         avail_w,
         avail_h.saturating_sub(reserved),
         MAX_CAP_PX,

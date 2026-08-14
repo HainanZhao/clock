@@ -2,20 +2,10 @@
 //! horizontal seam across the middle.
 
 use crate::color;
-use crate::config::{Config, MAX_CAP_PX};
+use crate::config::Config;
 use crate::faces::digital::time_text;
 use crate::render::{self, line_width, span, Line};
-use crate::vector;
 use chrono::{DateTime, Local};
-
-/// A card is one glyph plus a border and padding on each side.
-fn card_w(h: f64) -> usize {
-    vector::width_of(1, h) + 4
-}
-/// Two border rows plus the seam row, on top of the glyph itself.
-fn card_h(h: f64) -> usize {
-    vector::height_of(h) + 3
-}
 
 pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize) -> Vec<Line> {
     let primary = color::parse(&cfg.color);
@@ -35,21 +25,31 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     }
     let usable_h = avail_h.saturating_sub(reserved);
 
-    // Cards add fixed chrome per digit, so solve for the cap height that
-    // makes the whole row of cards fit rather than reusing the plain fit.
+    // Cards add fixed chrome per digit, so solve for the unit size u that
+    // makes the whole row of cards fit.
     let sep_w = 3;
-    let chrome_w = digits.len() * 4 + groups.saturating_sub(1) * sep_w;
-    let per_glyph_w = avail_w.saturating_sub(chrome_w) / digits.len().max(1);
-    let fit = vector::fit_height(1, per_glyph_w, usable_h.saturating_sub(3), MAX_CAP_PX);
-    let h = cfg.resolve_height(fit);
+    let fit = (1..=12)
+        .rev()
+        .find(|&u| {
+            let cw = 8 * u + 4;
+            let ch = 7 * u + 3;
+            let total_w = digits.len() * cw + groups.saturating_sub(1) * sep_w;
+            total_w <= avail_w && ch <= usable_h
+        })
+        .unwrap_or(1);
+    let u = if cfg.is_auto_scale() {
+        fit
+    } else {
+        (cfg.scale as usize).clamp(1, 12)
+    };
 
-    let cw = card_w(h);
-    let ch = card_h(h);
-    let glyph_rows = vector::height_of(h);
+    let cw = 8 * u + 4;
+    let ch = 7 * u + 3;
+    let glyph_rows = 7 * u;
     let seam_row = 1 + glyph_rows / 2;
     let border = color::dim(primary, 0.55);
 
-    // Each digit rendered once; card rows then slice into these.
+    // Each digit rendered once using the LCD font (seg7)
     let glyphs: Vec<Vec<Line>> = digits
         .iter()
         .enumerate()
@@ -58,7 +58,7 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
             let t0 = i as f64 / digits.len().max(2) as f64;
             let from = color::lerp(accent, primary, t0);
             let to = color::lerp(accent, primary, t0 + 0.3);
-            vector::render(&d.to_string(), h, &[], &|t| color::lerp(from, to, t))
+            crate::seg7::render(&d.to_string(), u, &[], false, &|t| color::lerp(from, to, t))
         })
         .collect();
 

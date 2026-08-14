@@ -1,6 +1,6 @@
 # clock
 
-A beautiful, configurable clock for your terminal with 12 faces — written in
+A beautiful, configurable clock for your terminal with 16 faces — written in
 Rust, ships as a single lightweight binary, idles at ~0% CPU.
 
 ```
@@ -31,12 +31,16 @@ Rust, ships as a single lightweight binary, idles at ~0% CPU.
 | `word`    | Natural language — "TWENTY PAST FOUR" in big letters          |
 | `matrix`  | Sharp 7-segment digits drawn in braille sub-pixels           |
 | `flip`    | Retro split-flap board — each digit on a card with a seam     |
-| `bars`    | Horizontal progress bars through the hour, minute and second |
+| `waves`   | Sci-fi oscilloscope — flowing sine waves with a central time card |
 | `rings`   | Concentric progress arcs, time in the middle                 |
 | `roman`   | Roman numerals, stacked and oversized                        |
 | `lcd`     | Thick seven-segment bars with solid corners                   |
 | `hourglass` | Sand draining through a glass, once per hour                |
 | `blocks`  | The whole day as a grid of blocks, one lit per interval passed |
+| `cuckoo`  | Ornate cuckoo clock chalet silhouette with a ticking swinging pendulum |
+| `radar`   | Aviation/marine radar screen with rotating sweep and target blips |
+| `ship`    | Maritime ship steering wheel with an elegant analog dial in the center |
+| `grid`    | Retro 3x5 block matrix digits rendered using solid square blocks ■ |
 
 Switch faces live with the Left/Right arrow keys, or press `Tab` for a
 picker grid showing a live preview of every face at once.
@@ -85,6 +89,7 @@ While running:
 | `q` / Esc   | Quit                                     |
 | `←` / `→`   | Cycle to the previous / next face        |
 | `Tab`       | Open a grid picker with a live preview of every face |
+| `c`         | Cycle through beautiful, solid color presets |
 | `t`         | Toggle 12h / 24h                         |
 | `s`         | Toggle seconds                           |
 | `+` / `-`   | Grow / shrink the clock                  |
@@ -114,7 +119,7 @@ clock config reset             # back to defaults
 Config file (created on first `config set`, edit by hand too):
 
 ```toml
-face = "digital"          # digital, analog, binary, word, matrix, flip, bars, rings, roman
+face = "digital"          # digital, analog, binary, word, matrix, flip, waves, rings, roman, lcd, hourglass, blocks, cuckoo, radar, ship, grid
 hour12 = true             # 12h with am/pm, or false for 24h
 show_seconds = true
 show_date = true
@@ -124,11 +129,11 @@ second_step = 1           # 5 shows :00, :05, :10 ... instead of every second
 ghost_segments = false    # lcd: show the unlit segments faintly, panel-style
 scale = 0                 # 0 = auto-fill the terminal; 1-9 to pin a size
 color = "#38d9e8"         # primary color
-accent_color = "#3b82f6"  # gradient end / hands / accents
+accent_color = "none"     # "none" for solid colors, or hex/color for gradients
 ```
 
 Faces are drawn with a gradient running from `color` to `accent_color`, and
-the multi-color faces (`bars`, `rings`, `analog`, `binary`) additionally give
+the multi-color faces (`waves`, `rings`, `analog`, `binary`) additionally give
 the hour, minute and second their own hues.
 
 Colors accept the standard ANSI names (`red`, `green`, `blue`, ...) or

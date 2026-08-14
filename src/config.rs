@@ -10,8 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, ValueEnum)]
 pub enum Face {
     #[default]
     Digital,
@@ -20,29 +19,65 @@ pub enum Face {
     Word,
     Matrix,
     Flip,
-    Bars,
+    Waves,
     Rings,
     Roman,
     Lcd,
     Hourglass,
     Blocks,
+    Cuckoo,
+    Radar,
+    Ship,
+    Grid,
+}
+
+impl<'de> Deserialize<'de> for Face {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(match s.to_ascii_lowercase().as_str() {
+            "digital" => Face::Digital,
+            "analog" => Face::Analog,
+            "binary" => Face::Binary,
+            "word" => Face::Word,
+            "matrix" => Face::Matrix,
+            "flip" => Face::Flip,
+            "waves" => Face::Waves,
+            "rings" => Face::Rings,
+            "roman" => Face::Roman,
+            "lcd" => Face::Lcd,
+            "hourglass" => Face::Hourglass,
+            "blocks" => Face::Blocks,
+            "cuckoo" => Face::Cuckoo,
+            "radar" => Face::Radar,
+            "ship" => Face::Ship,
+            "grid" => Face::Grid,
+            _ => Face::Digital, // Fallback to the first clock face if variant is unknown
+        })
+    }
 }
 
 impl Face {
     /// All faces, in the order they're cycled through and shown in the picker grid.
-    pub const ALL: [Face; 12] = [
+    pub const ALL: [Face; 16] = [
         Face::Digital,
         Face::Analog,
         Face::Binary,
         Face::Word,
         Face::Matrix,
         Face::Flip,
-        Face::Bars,
+        Face::Waves,
         Face::Rings,
         Face::Roman,
         Face::Lcd,
         Face::Hourglass,
         Face::Blocks,
+        Face::Cuckoo,
+        Face::Radar,
+        Face::Ship,
+        Face::Grid,
     ];
 
     fn index(self) -> usize {
@@ -67,12 +102,16 @@ impl fmt::Display for Face {
             Face::Word => write!(f, "word"),
             Face::Matrix => write!(f, "matrix"),
             Face::Flip => write!(f, "flip"),
-            Face::Bars => write!(f, "bars"),
+            Face::Waves => write!(f, "waves"),
             Face::Rings => write!(f, "rings"),
             Face::Roman => write!(f, "roman"),
             Face::Lcd => write!(f, "lcd"),
             Face::Hourglass => write!(f, "hourglass"),
             Face::Blocks => write!(f, "blocks"),
+            Face::Cuckoo => write!(f, "cuckoo"),
+            Face::Radar => write!(f, "radar"),
+            Face::Ship => write!(f, "ship"),
+            Face::Grid => write!(f, "grid"),
         }
     }
 }
@@ -99,10 +138,11 @@ pub const MAX_CAP_PX: f64 = 120.0;
 fn default_color() -> String {
     "#38d9e8".to_string()
 }
-/// Deliberately stays on the cool side of the wheel: gradients run from the
-/// primary to this, and anything magenta-ward turns the digits purple.
+/// By default, accent_color is "none", meaning it falls back to the primary color
+/// to avoid unexpected blending/purplish tints. Users can set a custom accent
+/// color to explicitly enable dual-color gradients.
 fn default_accent() -> String {
-    "#3b82f6".to_string()
+    "none".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,6 +182,9 @@ pub struct Config {
     /// :00, :05, :10 and so on, which calms faces whose glyphs change width.
     #[serde(default = "default_second_step")]
     pub second_step: u32,
+    /// Enable Google Calendar integration.
+    #[serde(default = "default_false")]
+    pub calendar: bool,
 }
 
 impl Default for Config {
@@ -158,6 +201,7 @@ impl Default for Config {
             accent_color: default_accent(),
             ghost_segments: false,
             second_step: default_second_step(),
+            calendar: false,
         }
     }
 }
@@ -214,6 +258,15 @@ impl Config {
         self.scale == 0
     }
 
+    /// Resolves the accent color, falling back to the primary color if set to "none" or empty.
+    pub fn resolve_accent(&self) -> String {
+        if self.accent_color.is_empty() || self.accent_color.to_ascii_lowercase() == "none" {
+            self.color.clone()
+        } else {
+            self.accent_color.clone()
+        }
+    }
+
     /// Cap height in sub-cell pixels: the auto-fit value, or a fixed size
     /// derived from `scale` when the user pinned one.
     pub fn resolve_height(&self, auto_fit: f64) -> f64 {
@@ -222,5 +275,23 @@ impl Config {
         } else {
             (self.scale.min(MAX_SCALE) as f64) * 6.0
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_face_deserialization_fallback() {
+        // 1. Valid face variant -> Should deserialize correctly
+        let valid_toml = "face = \"waves\"";
+        let cfg: Config = toml::from_str(valid_toml).unwrap();
+        assert_eq!(cfg.face, Face::Waves);
+
+        // 2. Unknown/obsolete face variant -> Should fallback to Digital
+        let unknown_toml = "face = \"obsolete_or_typo_face\"";
+        let cfg_fallback: Config = toml::from_str(unknown_toml).unwrap();
+        assert_eq!(cfg_fallback.face, Face::Digital);
     }
 }

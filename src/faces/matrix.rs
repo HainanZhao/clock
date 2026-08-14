@@ -103,7 +103,8 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     let fit = (1..=MAX_SCALE as usize)
         .rev()
         .find(|&s| {
-            ((total_px_w(&text, s) / 2.0).ceil() as usize) < avail_w
+            let fit_text = if cfg.show_seconds { text.to_string() } else { format!("{}:00", text) };
+            ((total_px_w(&fit_text, s) / 2.0).ceil() as usize) < avail_w
                 && ((digit_h(s) / 4.0).ceil() as usize) < usable_h
         })
         .unwrap_or(1);
@@ -128,4 +129,23 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
         ));
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_matrix_digits() {
+        for scale in 1..=4 {
+            println!("=== SCALE {} ===", scale);
+            for &digit in &["0", "4"] {
+                println!("=== Digit {} ===", digit);
+                let plain = draw(digit, scale, &[]);
+                for line in plain {
+                    println!("{}", line);
+                }
+            }
+        }
+    }
 }
