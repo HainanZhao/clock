@@ -104,7 +104,10 @@ fn next_wake(cfg: &Config, now: DateTime<Local>) -> Duration {
         Face::Analog | Face::Rings | Face::Hourglass | Face::Cuckoo | Face::Radar | Face::Ship | Face::Warp
     );
     let blinks = cfg.blink_colon && matches!(cfg.face, Face::Digital | Face::Matrix | Face::Flip | Face::Lcd | Face::Grid);
-    let period_ms: i64 = if blinks {
+    
+    let period_ms: i64 = if cfg.face == Face::Warp {
+        33 // 30 FPS high-smoothness refresh rate!
+    } else if blinks {
         500
     } else if cfg.show_seconds || animated {
         1000
