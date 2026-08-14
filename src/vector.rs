@@ -29,8 +29,10 @@ type Shape = (usize, usize, Vec<Seg>, Vec<DotPt>);
 enum Prim {
     /// Straight stroke between two points.
     Line(f64, f64, f64, f64),
-    /// Elliptical arc. Angles in degrees, 0 = +x, 90 = +y (downward on
-    /// screen); swept from `a0` to `a1`, which may run either direction.
+    /// Elliptical arc. Angles in degrees, 0 = right, 90 = down, 180 = left,
+    /// 270 = up. The sweep runs monotonically from `a0` to `a1`, so the
+    /// direction is whichever way that interval points — to arc over the top
+    /// from the left, write 195 -> 375, not 195 -> 15.
     Arc {
         cx: f64,
         cy: f64,
@@ -69,7 +71,7 @@ fn glyph(c: char) -> Vec<Prim> {
     match c.to_ascii_uppercase() {
         '0' => vec![ellipse(CX, 0.5, RX, ry)],
         '1' => vec![
-            Line(CX - RX * 0.75, TOP + 0.14, CX, TOP),
+            Line(CX - RX * 0.5, TOP + 0.13, CX, TOP),
             Line(CX, TOP, CX, BOT),
         ],
         '2' => vec![
@@ -79,7 +81,7 @@ fn glyph(c: char) -> Vec<Prim> {
                 rx: RX,
                 ry: RX,
                 a0: 195.0,
-                a1: 15.0,
+                a1: 375.0,
             },
             Line(CX + RX * 0.97, TOP + RX + RX * 0.26, TOP, BOT),
             Line(TOP, BOT, GLYPH_W - TOP, BOT),
@@ -91,7 +93,7 @@ fn glyph(c: char) -> Vec<Prim> {
                 rx: RX * 0.92,
                 ry: ry * 0.52,
                 a0: 200.0,
-                a1: 70.0,
+                a1: 430.0,
             },
             Arc {
                 cx: CX,
@@ -107,16 +109,19 @@ fn glyph(c: char) -> Vec<Prim> {
             Line(TOP, BOT - ry * 0.55, GLYPH_W - TOP, BOT - ry * 0.55),
             Line(CX + RX * 0.55, TOP, CX + RX * 0.55, BOT),
         ],
+        // Top bar, left stem, a middle bar into the bowl, then the bowl
+        // itself sweeping top -> right -> bottom -> lower left.
         '5' => vec![
-            Line(GLYPH_W - TOP, TOP, TOP + RX * 0.1, TOP),
-            Line(TOP + RX * 0.1, TOP, TOP + RX * 0.05, 0.44),
+            Line(TOP, TOP, GLYPH_W - TOP, TOP),
+            Line(TOP, TOP, TOP, 0.46),
+            Line(TOP, 0.46, CX, 0.46),
             Arc {
                 cx: CX,
-                cy: BOT - ry * 0.55,
+                cy: 0.70,
                 rx: RX,
-                ry: ry * 0.55,
-                a0: -78.0,
-                a1: 155.0,
+                ry: BOT - 0.70,
+                a0: 270.0,
+                a1: 500.0,
             },
         ],
         '6' => vec![
@@ -299,7 +304,7 @@ fn glyph(c: char) -> Vec<Prim> {
                 rx: RX,
                 ry: ry * 0.52,
                 a0: 20.0,
-                a1: 260.0,
+                a1: -200.0,
             },
             Arc {
                 cx: CX,
@@ -525,4 +530,22 @@ pub fn render(
         lines.push(line);
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Prints each glyph on its own so shapes can be eyeballed:
+    /// `cargo test glyph_shapes -- --nocapture`
+    #[test]
+    fn glyph_shapes() {
+        for c in "0123456789".chars() {
+            println!("=== {c} ===");
+            for l in render(&c.to_string(), 28.0, &[], &|_| Color::White) {
+                let text: String = l.iter().map(|s| s.text.as_str()).collect();
+                println!("{}", text.trim_end());
+            }
+        }
+    }
 }
