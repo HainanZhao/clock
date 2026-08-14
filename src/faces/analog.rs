@@ -62,3 +62,21 @@ pub fn render(now: DateTime<Local>, cfg: &Config, radius_cells: f64) -> Rendered
         hands: hands.lines(),
     }
 }
+
+/// Same clock, but face + hands drawn onto one canvas for a single-color
+/// preview (used by the face-picker grid, where per-cell accent coloring
+/// isn't worth the complexity).
+pub fn render_mono(now: DateTime<Local>, cfg: &Config, radius_cells: f64) -> Vec<String> {
+    let rendered = render(now, cfg, radius_cells);
+    rendered
+        .face
+        .iter()
+        .zip(rendered.hands.iter())
+        .map(|(f, h)| {
+            f.chars()
+                .zip(h.chars())
+                .map(|(fc, hc)| if hc != ' ' { hc } else { fc })
+                .collect()
+        })
+        .collect()
+}

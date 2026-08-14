@@ -167,7 +167,12 @@ fn set_field(cfg: &mut Config, key: &str, value: &str) -> Result<()> {
             cfg.face = match value.to_ascii_lowercase().as_str() {
                 "digital" => Face::Digital,
                 "analog" => Face::Analog,
-                other => bail!("unknown face '{other}' (expected 'digital' or 'analog')"),
+                "binary" => Face::Binary,
+                "word" => Face::Word,
+                "matrix" => Face::Matrix,
+                other => bail!(
+                    "unknown face '{other}' (expected one of: digital, analog, binary, word, matrix)"
+                ),
             }
         }
         "hour12" => cfg.hour12 = parse_bool(value)?,

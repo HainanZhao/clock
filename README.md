@@ -1,7 +1,7 @@
 # clock
 
-A beautiful, configurable digital & analog clock for your terminal — written
-in Rust, ships as a single lightweight binary, idles at ~0% CPU.
+A beautiful, configurable clock for your terminal with 5 faces — written in
+Rust, ships as a single lightweight binary, idles at ~0% CPU.
 
 ```
       ██         ██              ██      ██ ██████████            ██████████ ██████████
@@ -17,6 +17,19 @@ in Rust, ships as a single lightweight binary, idles at ~0% CPU.
                               11:15:30 AM
                           Friday, August 14 2026
 ```
+
+## Faces
+
+| Face      | Look                                                    |
+|-----------|----------------------------------------------------------|
+| `digital` | Big blocky LED-style digits                              |
+| `analog`  | Round clock face with hands, drawn in braille sub-pixels  |
+| `binary`  | Classic binary-coded-decimal dot grid                     |
+| `word`    | Natural language — "TEN PAST FOUR"                         |
+| `matrix`  | Sharper, smaller 7-segment digits, also drawn in braille   |
+
+Switch faces live with the Left/Right arrow keys, or press `Tab` for a
+picker grid showing a live preview of every face at once.
 
 ## Install
 
@@ -54,14 +67,17 @@ clock --face digital --color green --no-date
 
 While running:
 
-| Key       | Action                        |
-|-----------|-------------------------------|
-| `q` / Esc | Quit                          |
-| `d`       | Switch to the digital face    |
-| `a`       | Switch to the analog face     |
-| `t`       | Toggle 12h / 24h               |
-| `s`       | Toggle seconds                 |
-| `+` / `-` | Grow / shrink digits (digital) |
+| Key         | Action                                  |
+|-------------|------------------------------------------|
+| `q` / Esc   | Quit                                     |
+| `←` / `→`   | Cycle to the previous / next face        |
+| `Tab`       | Open a grid picker with a live preview of every face |
+| `t`         | Toggle 12h / 24h                         |
+| `s`         | Toggle seconds                           |
+| `+` / `-`   | Grow / shrink digits (digital/matrix)    |
+
+In the picker: arrow keys move the selection, `Enter` confirms, `Esc`
+cancels.
 
 ## Configuring
 
@@ -80,13 +96,13 @@ clock config reset             # back to defaults
 Config file (created on first `config set`, edit by hand too):
 
 ```toml
-face = "digital"        # "digital" or "analog"
+face = "digital"        # digital, analog, binary, word, or matrix
 hour12 = true            # 12h with am/pm, or false for 24h
 show_seconds = true
 show_date = true
-blink_colon = true       # digital: blink the ':' once a second
+blink_colon = true       # digital/matrix: blink the ':' once a second
 tick_marks = true         # analog: hour tick marks around the rim
-scale = 2                 # digital: digit size, 1-4
+scale = 2                 # digital/matrix: digit size, 1-4
 color = "cyan"            # digits / clock face color
 accent_color = "magenta"  # blinking colon / clock hands color
 ```

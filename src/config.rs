@@ -16,6 +16,32 @@ pub enum Face {
     #[default]
     Digital,
     Analog,
+    Binary,
+    Word,
+    Matrix,
+}
+
+impl Face {
+    /// All faces, in the order they're cycled through and shown in the picker grid.
+    pub const ALL: [Face; 5] = [
+        Face::Digital,
+        Face::Analog,
+        Face::Binary,
+        Face::Word,
+        Face::Matrix,
+    ];
+
+    fn index(self) -> usize {
+        Self::ALL.iter().position(|f| *f == self).unwrap_or(0)
+    }
+
+    pub fn next(self) -> Face {
+        Self::ALL[(self.index() + 1) % Self::ALL.len()]
+    }
+
+    pub fn prev(self) -> Face {
+        Self::ALL[(self.index() + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
 }
 
 impl fmt::Display for Face {
@@ -23,6 +49,9 @@ impl fmt::Display for Face {
         match self {
             Face::Digital => write!(f, "digital"),
             Face::Analog => write!(f, "analog"),
+            Face::Binary => write!(f, "binary"),
+            Face::Word => write!(f, "word"),
+            Face::Matrix => write!(f, "matrix"),
         }
     }
 }
