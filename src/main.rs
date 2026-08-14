@@ -3,6 +3,8 @@ mod braille;
 mod color;
 mod config;
 mod faces;
+mod render;
+mod vector;
 
 use anyhow::{bail, Result};
 use clap::{Args, Parser, Subcommand};
@@ -48,7 +50,7 @@ struct Overrides {
     /// Accent color (blinking colon / clock hands).
     #[arg(long)]
     accent_color: Option<String>,
-    /// Digit size, 1-4 (digital face only).
+    /// Clock size: 0 auto-fills the terminal, 1-9 pins a size.
     #[arg(long)]
     scale: Option<u8>,
 }
@@ -170,8 +172,13 @@ fn set_field(cfg: &mut Config, key: &str, value: &str) -> Result<()> {
                 "binary" => Face::Binary,
                 "word" => Face::Word,
                 "matrix" => Face::Matrix,
+                "flip" => Face::Flip,
+                "bars" => Face::Bars,
+                "rings" => Face::Rings,
+                "roman" => Face::Roman,
                 other => bail!(
-                    "unknown face '{other}' (expected one of: digital, analog, binary, word, matrix)"
+                    "unknown face '{other}' (expected one of: digital, analog, binary, word, \
+                     matrix, flip, bars, rings, roman)"
                 ),
             }
         }
@@ -183,8 +190,8 @@ fn set_field(cfg: &mut Config, key: &str, value: &str) -> Result<()> {
         "scale" => {
             cfg.scale = value
                 .parse::<u8>()
-                .map_err(|_| anyhow::anyhow!("scale must be a number 1-4"))?
-                .clamp(1, 4)
+                .map_err(|_| anyhow::anyhow!("scale must be 0 (auto) or 1-{}", config::MAX_SCALE))?
+                .min(config::MAX_SCALE)
         }
         "color" => cfg.color = value.to_string(),
         "accent_color" => cfg.accent_color = value.to_string(),

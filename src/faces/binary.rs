@@ -1,52 +1,102 @@
-//! Binary-coded-decimal clock: each decimal digit of HH:MM(:SS) shown as a
-//! column of 4 dots (bit weights 8,4,2,1 top to bottom).
+//! Binary-coded-decimal clock: each decimal digit of HH:MM(:SS) is a column
+//! of 4 dots (bit weights 8,4,2,1 top to bottom), sized to fill the terminal.
 
+use crate::color;
 use crate::config::Config;
+use crate::render::{self, span, Line};
 use chrono::{DateTime, Local, Timelike};
+use crossterm::style::Color;
 
-const ON: char = '●';
-const OFF: char = '○';
+pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize) -> Vec<Line> {
+    let primary = color::parse(&cfg.color);
+    let accent = color::parse(&cfg.accent_color);
 
-fn digit_column(d: u32) -> [char; 4] {
-    [
-        if d & 0b1000 != 0 { ON } else { OFF },
-        if d & 0b0100 != 0 { ON } else { OFF },
-        if d & 0b0010 != 0 { ON } else { OFF },
-        if d & 0b0001 != 0 { ON } else { OFF },
-    ]
-}
-
-pub fn render(now: DateTime<Local>, cfg: &Config) -> Vec<String> {
-    let (hour, _) = if cfg.hour12 {
+    let hour = if cfg.hour12 {
         let h = now.hour12().1;
-        (if h == 0 { 12 } else { h }, ())
+        if h == 0 {
+            12
+        } else {
+            h
+        }
     } else {
-        (now.hour(), ())
+        now.hour()
     };
 
     let mut digits = vec![hour / 10, hour % 10, now.minute() / 10, now.minute() % 10];
-    let mut header = vec!["H", "H", "M", "M"];
+    let mut groups = vec![0usize, 0, 1, 1];
     if cfg.show_seconds {
         digits.push(now.second() / 10);
         digits.push(now.second() % 10);
-        header.push("S");
-        header.push("S");
+        groups.push(2);
+        groups.push(2);
     }
+    let n = digits.len();
 
-    let columns: Vec<[char; 4]> = digits.into_iter().map(digit_column).collect();
+    // Grow dot spacing/size to use the available width, within reason.
+    let reserved = if cfg.show_date { 4 } else { 2 };
+    let usable_h = avail_h.saturating_sub(reserved);
+    let max_by_w = if n > 0 { avail_w / (n * 2) } else { 1 };
+    let max_by_h = usable_h / 5;
+    let cell = cfg.resolve_scale(max_by_w.min(max_by_h).clamp(1, 6));
+    let dot_w = cell.max(1);
+    let gap = dot_w;
 
-    let mut lines = Vec::with_capacity(6);
-    lines.push(header.join("   "));
-    lines.push(String::new());
+    // One hue per HH / MM / SS group.
+    let group_color = |g: usize| match g {
+        0 => accent,
+        1 => color::lerp(accent, primary, 0.6),
+        _ => color::hue(color::SECOND_HUE),
+    };
+    let off = Color::DarkGrey;
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Header row labelling the columns.
+    let mut header: Line = Vec::new();
+    for (i, g) in groups.iter().enumerate() {
+        if i > 0 {
+            header.push(span(" ".repeat(gap), off));
+        }
+        let ch = match g {
+            0 => 'H',
+            1 => 'M',
+            _ => 'S',
+        };
+        let mut cell_text = String::new();
+        let pad = dot_w.saturating_sub(1) / 2;
+        cell_text.push_str(&" ".repeat(pad));
+        cell_text.push(ch);
+        cell_text.push_str(&" ".repeat(dot_w.saturating_sub(pad + 1)));
+        header.push(span(cell_text, color::dim(group_color(*g), 0.8)));
+    }
+    lines.push(header);
+    lines.push(render::blank());
+
     for row in 0..4 {
-        let cells: Vec<String> = columns.iter().map(|c| c[row].to_string()).collect();
-        lines.push(cells.join("   "));
+        let weight = 1 << (3 - row);
+        let mut l: Line = Vec::new();
+        for (i, d) in digits.iter().enumerate() {
+            if i > 0 {
+                l.push(span(" ".repeat(gap), off));
+            }
+            let lit = d & weight != 0;
+            let c = if lit {
+                group_color(groups[i])
+            } else {
+                color::dim(off, 0.55)
+            };
+            let ch = if lit { '\u{2588}' } else { '\u{00b7}' };
+            l.push(span(ch.to_string().repeat(dot_w), c));
+        }
+        lines.push(l);
     }
 
     if cfg.show_date {
-        lines.push(String::new());
-        lines.push(now.format("%A, %B %-d %Y").to_string());
+        lines.push(render::blank());
+        lines.push(render::line(
+            now.format("%A, %B %-d %Y").to_string(),
+            color::dim(primary, 0.75),
+        ));
     }
-
     lines
 }

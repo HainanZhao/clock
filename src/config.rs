@@ -19,16 +19,24 @@ pub enum Face {
     Binary,
     Word,
     Matrix,
+    Flip,
+    Bars,
+    Rings,
+    Roman,
 }
 
 impl Face {
     /// All faces, in the order they're cycled through and shown in the picker grid.
-    pub const ALL: [Face; 5] = [
+    pub const ALL: [Face; 9] = [
         Face::Digital,
         Face::Analog,
         Face::Binary,
         Face::Word,
         Face::Matrix,
+        Face::Flip,
+        Face::Bars,
+        Face::Rings,
+        Face::Roman,
     ];
 
     fn index(self) -> usize {
@@ -52,6 +60,10 @@ impl fmt::Display for Face {
             Face::Binary => write!(f, "binary"),
             Face::Word => write!(f, "word"),
             Face::Matrix => write!(f, "matrix"),
+            Face::Flip => write!(f, "flip"),
+            Face::Bars => write!(f, "bars"),
+            Face::Rings => write!(f, "rings"),
+            Face::Roman => write!(f, "roman"),
         }
     }
 }
@@ -59,14 +71,23 @@ impl fmt::Display for Face {
 fn default_true() -> bool {
     true
 }
+/// 0 means "auto": grow the face to fill the terminal.
 fn default_scale() -> u8 {
-    2
+    0
 }
+
+/// Upper bound on the `scale` setting (0 stays "auto").
+pub const MAX_SCALE: u8 = 9;
+/// Upper bound on glyph cap height in sub-cell pixels, so an enormous
+/// terminal doesn't render absurdly heavy strokes.
+pub const MAX_CAP_PX: f64 = 120.0;
 fn default_color() -> String {
-    "cyan".to_string()
+    "#38d9e8".to_string()
 }
+/// Deliberately stays on the cool side of the wheel: gradients run from the
+/// primary to this, and anything magenta-ward turns the digits purple.
 fn default_accent() -> String {
-    "magenta".to_string()
+    "#3b82f6".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,7 +169,27 @@ impl Config {
         Ok(())
     }
 
-    pub fn scale_clamped(&self) -> u8 {
-        self.scale.clamp(1, 4)
+    /// The scale to actually draw at: the user's fixed `scale`, or — when
+    /// `scale` is 0 ("auto") — the largest size the caller found that fits.
+    pub fn resolve_scale(&self, auto_fit: usize) -> usize {
+        if self.scale == 0 {
+            auto_fit.max(1)
+        } else {
+            self.scale.min(MAX_SCALE) as usize
+        }
+    }
+
+    pub fn is_auto_scale(&self) -> bool {
+        self.scale == 0
+    }
+
+    /// Cap height in sub-cell pixels: the auto-fit value, or a fixed size
+    /// derived from `scale` when the user pinned one.
+    pub fn resolve_height(&self, auto_fit: f64) -> f64 {
+        if self.scale == 0 {
+            auto_fit
+        } else {
+            (self.scale.min(MAX_SCALE) as f64) * 6.0
+        }
     }
 }

@@ -54,6 +54,88 @@ pub fn parse(name: &str) -> Color {
     }
 }
 
+/// Approximate RGB for any color, so we can interpolate between named ANSI
+/// colors and truecolor values uniformly.
+pub fn to_rgb(c: Color) -> (u8, u8, u8) {
+    match c {
+        Color::Rgb { r, g, b } => (r, g, b),
+        Color::Black => (0, 0, 0),
+        Color::DarkGrey => (100, 100, 100),
+        Color::Red => (255, 85, 85),
+        Color::DarkRed => (170, 0, 0),
+        Color::Green => (85, 255, 85),
+        Color::DarkGreen => (0, 170, 0),
+        Color::Yellow => (255, 255, 85),
+        Color::DarkYellow => (255, 145, 0),
+        Color::Blue => (85, 130, 255),
+        Color::DarkBlue => (0, 0, 170),
+        Color::Magenta => (255, 85, 255),
+        Color::DarkMagenta => (170, 0, 170),
+        Color::Cyan => (85, 255, 255),
+        Color::DarkCyan => (0, 170, 170),
+        Color::White | Color::Grey => (229, 229, 229),
+        _ => (200, 200, 200),
+    }
+}
+
+/// Linear blend between two colors; `t` is clamped to 0..=1.
+pub fn lerp(a: Color, b: Color, t: f64) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    let (ar, ag, ab) = to_rgb(a);
+    let (br, bg, bb) = to_rgb(b);
+    let mix = |x: u8, y: u8| (x as f64 + (y as f64 - x as f64) * t).round() as u8;
+    Color::Rgb {
+        r: mix(ar, br),
+        g: mix(ag, bg),
+        b: mix(ab, bb),
+    }
+}
+
+/// Scales a color's brightness, used to dim the "unfilled" part of bars and
+/// rings without needing a second configured color.
+pub fn dim(c: Color, factor: f64) -> Color {
+    let (r, g, b) = to_rgb(c);
+    let f = |v: u8| (v as f64 * factor).clamp(0.0, 255.0).round() as u8;
+    Color::Rgb {
+        r: f(r),
+        g: f(g),
+        b: f(b),
+    }
+}
+
+/// Hues used to tell the hour / minute / second components apart on the
+/// multi-color faces. All three sit on the cool-to-warm arc that avoids
+/// magenta, which reads as an odd purple against the default palette.
+pub const HOUR_HUE: f64 = 192.0;
+pub const MINUTE_HUE: f64 = 158.0;
+pub const SECOND_HUE: f64 = 36.0;
+
+/// A point on the HSV wheel, slightly desaturated so the colors read as a
+/// palette rather than raw primaries.
+pub fn hue(deg: f64) -> Color {
+    hsv(deg, 0.78, 0.98)
+}
+
+pub fn hsv(deg: f64, s: f64, v: f64) -> Color {
+    let h = deg.rem_euclid(360.0) / 60.0;
+    let i = h.floor() as i32;
+    let f = h - h.floor();
+    let (p, q, t) = (v * (1.0 - s), v * (1.0 - s * f), v * (1.0 - s * (1.0 - f)));
+    let (r, g, b) = match i {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
+    };
+    Color::Rgb {
+        r: (r * 255.0).round() as u8,
+        g: (g * 255.0).round() as u8,
+        b: (b * 255.0).round() as u8,
+    }
+}
+
 /// The list of built-in color names, shown in `clock config colors`.
 pub const NAMES: &[&str] = &[
     "black",

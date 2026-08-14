@@ -1,9 +1,11 @@
-//! A sharper, smaller 7-segment digital face drawn with braille sub-pixels
-//! (same technique as the analog face) instead of full block characters.
+//! A sharper 7-segment digital face drawn with braille sub-pixels.
 
 use crate::braille::Canvas;
-use crate::config::Config;
-use chrono::{DateTime, Local, Timelike};
+use crate::color;
+use crate::config::{Config, MAX_SCALE};
+use crate::faces::digital::{blink_mask, time_text};
+use crate::render::{self, Line};
+use chrono::{DateTime, Local};
 
 /// Which of the 7 segments (a=top, b=upper-right, c=lower-right, d=bottom,
 /// e=lower-left, f=upper-left, g=middle) are lit for a digit.
@@ -23,97 +25,107 @@ fn segments(c: char) -> [bool; 7] {
     }
 }
 
-/// Renders `text` (digits, ':' and spaces) using braille 7-segment glyphs,
-/// `scale` sub-pixel units per digit, blanking positions in `blink_mask`.
-pub fn render_text(text: &str, scale: u8, blink_mask: &[bool]) -> Vec<String> {
-    let w = 8.0 * scale.max(1) as f64;
-    let h = 16.0 * scale.max(1) as f64;
-    let gutter = 4.0 * scale.max(1) as f64;
-    let colon_w = 4.0 * scale.max(1) as f64;
+/// Sub-pixel geometry for one digit at `scale`.
+fn digit_w(scale: usize) -> f64 {
+    8.0 * scale as f64
+}
+fn digit_h(scale: usize) -> f64 {
+    16.0 * scale as f64
+}
+fn colon_w(scale: usize) -> f64 {
+    4.0 * scale as f64
+}
+fn gutter(scale: usize) -> f64 {
+    4.0 * scale as f64
+}
 
-    let mut cursor_x = 0.0;
-    let widths: Vec<f64> = text
+fn total_px_w(text: &str, scale: usize) -> f64 {
+    let n = text.chars().count();
+    let sum: f64 = text
         .chars()
-        .map(|c| if c == ':' { colon_w } else { w })
-        .collect();
-    let total_w: f64 = widths.iter().sum::<f64>() + gutter * (widths.len().max(1) - 1) as f64;
+        .map(|c| if c == ':' { colon_w(scale) } else { digit_w(scale) })
+        .sum();
+    sum + gutter(scale) * (n.max(1) - 1) as f64
+}
 
-    let cols = (total_w / 2.0).ceil() as usize + 1;
+fn draw(text: &str, scale: usize, mask: &[bool]) -> Vec<String> {
+    let w = digit_w(scale);
+    let h = digit_h(scale);
+    let cols = (total_px_w(text, scale) / 2.0).ceil() as usize + 1;
     let rows = (h / 4.0).ceil() as usize + 1;
     let mut canvas = Canvas::new(cols, rows);
 
-    let (tl, tr, ml, mr, bl, br) = ((0.0, 0.0), (w, 0.0), (0.0, h / 2.0), (w, h / 2.0), (0.0, h), (w, h));
-
+    let mut x = 0.0;
     for (i, c) in text.chars().enumerate() {
-        let x0 = cursor_x;
-        let blank = blink_mask.get(i).copied().unwrap_or(false);
+        let blank = mask.get(i).copied().unwrap_or(false);
         if !blank {
             if c == ':' {
-                let cx = x0 + colon_w / 2.0;
-                canvas.line(cx, h * 0.28, cx, h * 0.32);
-                canvas.line(cx, h * 0.68, cx, h * 0.72);
+                let cx = x + colon_w(scale) / 2.0;
+                let dot = (scale as f64).max(1.0);
+                canvas.line(cx, h * 0.30 - dot, cx, h * 0.30 + dot);
+                canvas.line(cx, h * 0.70 - dot, cx, h * 0.70 + dot);
             } else {
                 let seg = segments(c);
-                let shifted = |p: (f64, f64)| (x0 + p.0, p.1);
-                let edges = [
-                    (seg[0], tl, tr), // a
-                    (seg[1], tr, mr), // b
-                    (seg[2], mr, br), // c
-                    (seg[3], bl, br), // d
-                    (seg[4], ml, bl), // e
-                    (seg[5], tl, ml), // f
-                    (seg[6], ml, mr), // g
+                let pts = [
+                    (seg[0], (x, 0.0), (x + w, 0.0)),
+                    (seg[1], (x + w, 0.0), (x + w, h / 2.0)),
+                    (seg[2], (x + w, h / 2.0), (x + w, h)),
+                    (seg[3], (x, h), (x + w, h)),
+                    (seg[4], (x, h / 2.0), (x, h)),
+                    (seg[5], (x, 0.0), (x, h / 2.0)),
+                    (seg[6], (x, h / 2.0), (x + w, h / 2.0)),
                 ];
-                for (on, p0, p1) in edges {
+                for (on, p0, p1) in pts {
                     if on {
-                        let (x0p, y0p) = shifted(p0);
-                        let (x1p, y1p) = shifted(p1);
-                        canvas.line(x0p, y0p, x1p, y1p);
+                        canvas.line(p0.0, p0.1, p1.0, p1.1);
                     }
                 }
             }
         }
-        cursor_x += widths[i] + gutter;
+        x += if c == ':' { colon_w(scale) } else { w } + gutter(scale);
     }
-
     canvas.lines()
 }
 
-pub fn render(now: DateTime<Local>, cfg: &Config) -> Vec<String> {
-    let (hour, suffix) = if cfg.hour12 {
-        let h = now.hour12().1;
-        let h = if h == 0 { 12 } else { h };
-        (h, if now.hour() < 12 { " AM" } else { " PM" })
-    } else {
-        (now.hour(), "")
-    };
+pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize) -> Vec<Line> {
+    let (text, colons, suffix) = time_text(now, cfg);
+    let n = text.chars().count();
 
-    let mut text = format!("{hour:02}:{:02}", now.minute());
-    let mut colon_positions = vec![2];
-    if cfg.show_seconds {
-        text.push_str(&format!(":{:02}", now.second()));
-        colon_positions.push(5);
-    }
-
-    let blink_on = cfg.blink_colon && now.timestamp_millis() / 500 % 2 == 0;
-    let mut blink_mask = vec![false; text.chars().count()];
-    if blink_on {
-        for pos in colon_positions {
-            if pos < blink_mask.len() {
-                blink_mask[pos] = true;
-            }
-        }
-    }
-
-    let mut lines = render_text(&text, cfg.scale_clamped(), &blink_mask);
-
+    let mut reserved = 0;
     if !suffix.is_empty() {
-        lines.push(String::new());
-        lines.push(suffix.trim().to_string());
+        reserved += 2;
     }
     if cfg.show_date {
-        lines.push(String::new());
-        lines.push(now.format("%A, %B %-d %Y").to_string());
+        reserved += 2;
+    }
+    let usable_h = avail_h.saturating_sub(reserved);
+
+    let fit = (1..=MAX_SCALE as usize)
+        .rev()
+        .find(|&s| {
+            ((total_px_w(&text, s) / 2.0).ceil() as usize) < avail_w
+                && ((digit_h(s) / 4.0).ceil() as usize) < usable_h
+        })
+        .unwrap_or(1);
+    let scale = cfg.resolve_scale(fit);
+
+    let mask = blink_mask(now, cfg, n, &colons);
+    let plain = draw(&text, scale, &mask);
+
+    let primary = color::parse(&cfg.color);
+    let accent = color::parse(&cfg.accent_color);
+    let mut lines = render::gradient_block(&plain, primary, accent);
+
+    if !suffix.is_empty() {
+        lines.push(render::blank());
+        lines.push(render::line(suffix, accent));
+    }
+    if cfg.show_date {
+        lines.push(render::blank());
+        lines.push(render::line(
+            now.format("%A, %B %-d %Y").to_string(),
+            color::dim(primary, 0.75),
+        ));
     }
     lines
 }

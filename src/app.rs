@@ -1,8 +1,9 @@
 //! Terminal setup, the render loop, and live keybindings.
 
 use crate::color;
-use crate::config::{Config, Face};
+use crate::config::{Config, Face, MAX_SCALE};
 use crate::faces;
+use crate::render::{self, Line};
 use anyhow::Result;
 use chrono::{DateTime, Local};
 use crossterm::cursor::{Hide, MoveTo, Show};
@@ -13,10 +14,22 @@ use crossterm::{execute, queue};
 use std::io::{Stdout, Write};
 use std::time::Duration;
 
-const HELP: &str = "q quit  \u{2190}/\u{2192} face  tab picker  t 12/24h  s seconds  +/- size";
-const PICKER_COLS: usize = 2;
+const HELP_ITEMS: &[&str] = &[
+    "\u{2190}\u{2192} face",
+    "tab picker",
+    "t 12/24h",
+    "s seconds",
+    "+/- size",
+    "0 auto",
+    "q quit",
+];
+const PICKER_COLS: usize = 3;
+/// Rows reserved at the bottom for the status line.
+const CHROME_H: u16 = 2;
 
 pub fn run(mut cfg: Config) -> Result<()> {
+    let started_with = cfg.clone();
+
     terminal::enable_raw_mode()?;
     let mut out = std::io::stdout();
     execute!(out, EnterAlternateScreen, Hide)?;
@@ -25,7 +38,34 @@ pub fn run(mut cfg: Config) -> Result<()> {
 
     execute!(out, Show, LeaveAlternateScreen)?;
     terminal::disable_raw_mode()?;
+
+    // Whatever the user switched to during the session becomes the default
+    // for next time, so restarting resumes the face they were last looking
+    // at. Written onto the *stored* config so one-off CLI overrides don't
+    // leak into it, and only when something actually changed on screen.
+    persist_session(&started_with, &cfg);
+
     result
+}
+
+/// Saves the settings the user can change from the keyboard. Failures are
+/// deliberately silent: a read-only config directory shouldn't take the
+/// clock down after it has already exited cleanly.
+fn persist_session(before: &Config, after: &Config) {
+    let changed = before.face != after.face
+        || before.hour12 != after.hour12
+        || before.show_seconds != after.show_seconds
+        || before.scale != after.scale;
+    if !changed {
+        return;
+    }
+    if let Ok(mut stored) = Config::load() {
+        stored.face = after.face;
+        stored.hour12 = after.hour12;
+        stored.show_seconds = after.show_seconds;
+        stored.scale = after.scale;
+        let _ = stored.save();
+    }
 }
 
 /// How long we can sleep before the on-screen display would go stale.
@@ -34,10 +74,11 @@ pub fn run(mut cfg: Config) -> Result<()> {
 /// (backed by kqueue/epoll/IOCP under crossterm) until either a key arrives
 /// or this deadline passes, so idle CPU usage is effectively zero. We only
 /// wake as often as the display can actually change: every 500ms to blink
-/// the digital colon, every second to advance a seconds readout, or — with
-/// seconds hidden — only once a minute.
+/// a colon, every second to advance a seconds readout, or — with seconds
+/// hidden — only once a minute.
 fn next_wake(cfg: &Config, now: DateTime<Local>) -> Duration {
-    let period_ms: i64 = if cfg.blink_colon && matches!(cfg.face, Face::Digital | Face::Matrix) {
+    let blinks = cfg.blink_colon && matches!(cfg.face, Face::Digital | Face::Matrix | Face::Flip);
+    let period_ms: i64 = if blinks {
         500
     } else if cfg.show_seconds {
         1000
@@ -128,12 +169,19 @@ fn event_loop(out: &mut Stdout, cfg: &mut Config) -> Result<()> {
                                 cfg.show_seconds = !cfg.show_seconds;
                                 needs_clear = true;
                             }
+                            KeyCode::Char('0') => {
+                                cfg.scale = 0;
+                                needs_clear = true;
+                            }
                             KeyCode::Char('+') | KeyCode::Char('=') => {
-                                cfg.scale = (cfg.scale + 1).min(4);
+                                // Leaving auto starts from the size on screen.
+                                let cur = current_scale(cfg)?;
+                                cfg.scale = (cur + 1).min(MAX_SCALE);
                                 needs_clear = true;
                             }
                             KeyCode::Char('-') => {
-                                cfg.scale = cfg.scale.saturating_sub(1).max(1);
+                                let cur = current_scale(cfg)?;
+                                cfg.scale = cur.saturating_sub(1).max(1);
                                 needs_clear = true;
                             }
                             _ => {}
@@ -148,171 +196,119 @@ fn event_loop(out: &mut Stdout, cfg: &mut Config) -> Result<()> {
     Ok(())
 }
 
+/// The scale currently on screen, so `+`/`-` continue from what the user sees
+/// rather than jumping when leaving auto-scale.
+fn current_scale(cfg: &Config) -> Result<u8> {
+    if !cfg.is_auto_scale() {
+        return Ok(cfg.scale);
+    }
+    let (w, h) = terminal::size()?;
+    let (text, _, suffix) = faces::digital::time_text(Local::now(), cfg);
+    let mut reserved = 0;
+    if !suffix.is_empty() {
+        reserved += 2;
+    }
+    if cfg.show_date {
+        reserved += 2;
+    }
+    let cap = crate::vector::fit_height(
+        text.chars().count(),
+        w as usize,
+        (h.saturating_sub(CHROME_H) as usize).saturating_sub(reserved),
+        crate::config::MAX_CAP_PX,
+    );
+    // `scale` counts in 6px cap-height steps; round to the nearest one.
+    Ok(((cap / 6.0).round() as u8).clamp(1, MAX_SCALE))
+}
+
+fn render_face(face: Face, now: DateTime<Local>, cfg: &Config, w: usize, h: usize) -> Vec<Line> {
+    match face {
+        Face::Digital => faces::digital::render(now, cfg, w, h),
+        Face::Analog => faces::analog::render(now, cfg, w, h),
+        Face::Binary => faces::binary::render(now, cfg, w, h),
+        Face::Word => faces::word::render(now, cfg, w, h),
+        Face::Matrix => faces::matrix::render(now, cfg, w, h),
+        Face::Flip => faces::flip::render(now, cfg, w, h),
+        Face::Bars => faces::bars::render(now, cfg, w, h),
+        Face::Rings => faces::rings::render(now, cfg, w, h),
+        Face::Roman => faces::roman::render(now, cfg, w, h),
+    }
+}
+
 fn draw(out: &mut Stdout, cfg: &Config) -> Result<()> {
     let (term_w, term_h) = terminal::size()?;
-    if term_w < 24 || term_h < 8 {
+    if term_w < 20 || term_h < 6 {
         queue!(out, Clear(ClearType::All), MoveTo(0, 0))?;
         queue!(out, Print("terminal too small"))?;
         return Ok(());
     }
 
     let now = Local::now();
-    let primary = color::parse(&cfg.color);
-    let accent = color::parse(&cfg.accent_color);
+    let avail_h = term_h.saturating_sub(CHROME_H) as usize;
+    let lines = render_face(cfg.face, now, cfg, term_w as usize, avail_h);
+    draw_block(out, term_w, avail_h as u16, &lines)?;
 
-    match cfg.face {
-        Face::Digital => {
-            let lines = faces::digital::render(now, cfg);
-            draw_plain_block(out, term_w, term_h, &lines, primary)?;
-        }
-        Face::Binary => {
-            let lines = faces::binary::render(now, cfg);
-            draw_plain_block(out, term_w, term_h, &lines, primary)?;
-        }
-        Face::Word => {
-            let lines = faces::word::render(now, cfg);
-            draw_plain_block(out, term_w, term_h, &lines, primary)?;
-        }
-        Face::Matrix => {
-            let lines = faces::matrix::render(now, cfg);
-            draw_plain_block(out, term_w, term_h, &lines, primary)?;
-        }
-        Face::Analog => {
-            let radius = ((term_h as f64 - 6.0) / 2.0)
-                .min(term_w as f64 / 4.5)
-                .max(4.0);
-            let rendered = faces::analog::render(now, cfg, radius);
-            draw_analog(out, term_w, term_h, &rendered, primary, accent, cfg)?;
+    draw_status(out, term_w, term_h)?;
+    Ok(())
+}
+
+/// Centered hint bar on the bottom row. The row is cleared first so a wider
+/// previous frame can't leave characters stranded past the new text.
+fn draw_status(out: &mut Stdout, term_w: u16, term_h: u16) -> Result<()> {
+    let sep = "  \u{00b7}  ";
+    let mut text = HELP_ITEMS.join(sep);
+    if text.chars().count() > term_w as usize {
+        // Narrow terminal: drop the separators' padding, then trailing items.
+        text = HELP_ITEMS.join(" \u{00b7} ");
+        while text.chars().count() > term_w as usize && text.contains('\u{00b7}') {
+            let cut = text.rfind('\u{00b7}').unwrap();
+            text.truncate(cut);
+            text = text.trim_end().to_string();
         }
     }
-
-    // Status line, dim, bottom-left.
+    let pad = (term_w as usize).saturating_sub(text.chars().count()) / 2;
     queue!(
         out,
         MoveTo(0, term_h.saturating_sub(1)),
+        Clear(ClearType::CurrentLine),
+        MoveTo(pad as u16, term_h.saturating_sub(1)),
         SetForegroundColor(Color::DarkGrey),
-        Print(HELP),
+        Print(&text),
         ResetColor
     )?;
     Ok(())
 }
 
-fn draw_plain_block(
-    out: &mut Stdout,
-    term_w: u16,
-    term_h: u16,
-    lines: &[String],
-    color: Color,
-) -> Result<()> {
-    let block_width = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
-    let block_height = lines.len();
-    let start_row = term_h.saturating_sub(block_height as u16) / 2;
-    let start_col = term_w.saturating_sub(block_width as u16) / 2;
+/// Centers a block of styled lines in the given area and prints it.
+fn draw_block(out: &mut Stdout, area_w: u16, area_h: u16, lines: &[Line]) -> Result<()> {
+    let block_w = render::block_width(lines);
+    let block_h = lines.len();
+    let start_row = area_h.saturating_sub(block_h as u16) / 2;
+    let start_col = area_w.saturating_sub(block_w as u16) / 2;
 
-    for (i, line) in lines.iter().enumerate() {
-        let pad = (block_width.saturating_sub(line.chars().count())) / 2;
-        queue!(
-            out,
-            MoveTo(start_col + pad as u16, start_row + i as u16),
-            SetForegroundColor(color),
-            Print(line),
-            ResetColor
-        )?;
+    for (i, l) in lines.iter().enumerate() {
+        if i as u16 >= area_h {
+            break;
+        }
+        let pad = block_w.saturating_sub(render::line_width(l)) / 2;
+        queue!(out, MoveTo(start_col + pad as u16, start_row + i as u16))?;
+        for s in l {
+            queue!(out, SetForegroundColor(s.color), Print(&s.text))?;
+        }
+        queue!(out, ResetColor)?;
     }
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn draw_analog(
-    out: &mut Stdout,
-    term_w: u16,
-    term_h: u16,
-    rendered: &faces::analog::Rendered,
-    primary: Color,
-    accent: Color,
-    cfg: &Config,
-) -> Result<()> {
-    let now = Local::now();
-    let cols = rendered.face.first().map(|l| l.chars().count()).unwrap_or(0);
-    let rows = rendered.face.len();
-
-    let mut extra_lines: Vec<String> = vec![String::new()];
-    let time_fmt = if cfg.hour12 { "%I:%M:%S %p" } else { "%H:%M:%S" };
-    extra_lines.push(now.format(time_fmt).to_string());
-    if cfg.show_date {
-        extra_lines.push(now.format("%A, %B %-d %Y").to_string());
-    }
-
-    let extra_width = extra_lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
-    let block_width = cols.max(extra_width);
-    let block_height = rows + extra_lines.len();
-    let start_row = term_h.saturating_sub(block_height as u16) / 2;
-    let start_col = term_w.saturating_sub(block_width as u16) / 2;
-    let face_pad = (block_width.saturating_sub(cols)) / 2;
-
-    for r in 0..rows {
-        let face_line: Vec<char> = rendered.face[r].chars().collect();
-        let hand_line: Vec<char> = rendered.hands[r].chars().collect();
-        queue!(out, MoveTo(start_col + face_pad as u16, start_row + r as u16))?;
-
-        let mut cur_color: Option<Color> = None;
-        let mut buf = String::new();
-        for i in 0..cols {
-            let hc = hand_line.get(i).copied().unwrap_or(' ');
-            let fc = face_line.get(i).copied().unwrap_or(' ');
-            let (ch, col) = if hc != ' ' {
-                (hc, accent)
-            } else {
-                (fc, primary)
-            };
-            match cur_color {
-                Some(c) if c == col => buf.push(ch),
-                Some(c) => {
-                    queue!(out, SetForegroundColor(c), Print(&buf))?;
-                    buf.clear();
-                    buf.push(ch);
-                    cur_color = Some(col);
-                }
-                None => {
-                    cur_color = Some(col);
-                    buf.push(ch);
-                }
-            }
-        }
-        if let Some(c) = cur_color {
-            queue!(out, SetForegroundColor(c), Print(&buf), ResetColor)?;
-        }
-    }
-
-    for (i, line) in extra_lines.iter().enumerate() {
-        let pad = (block_width.saturating_sub(line.chars().count())) / 2;
-        queue!(
-            out,
-            MoveTo(start_col + pad as u16, start_row + rows as u16 + i as u16),
-            SetForegroundColor(primary),
-            Print(line),
-            ResetColor
-        )?;
-    }
-    Ok(())
-}
-
-/// A small, single-color rendering of `face` used as a thumbnail in the
-/// face-picker grid: no date/seconds clutter, fixed minimum scale.
-fn mini_render(face: Face, now: DateTime<Local>, cfg: &Config) -> Vec<String> {
+/// A small preview of `face` for the picker grid: no date clutter, and forced
+/// to a size that fits inside one grid cell.
+fn mini_render(face: Face, now: DateTime<Local>, cfg: &Config, w: usize, h: usize) -> Vec<Line> {
     let mut preview = cfg.clone();
-    preview.scale = 1;
+    preview.scale = 0;
     preview.show_date = false;
     preview.show_seconds = false;
     preview.blink_colon = false;
-
-    match face {
-        Face::Digital => faces::digital::render(now, &preview),
-        Face::Analog => faces::analog::render_mono(now, &preview, 2.5),
-        Face::Binary => faces::binary::render(now, &preview),
-        Face::Word => faces::word::render(now, &preview),
-        Face::Matrix => faces::matrix::render(now, &preview),
-    }
+    render_face(face, now, &preview, w, h)
 }
 
 fn draw_box(out: &mut Stdout, x0: u16, y0: u16, w: u16, h: u16, color: Color) -> Result<()> {
@@ -324,12 +320,7 @@ fn draw_box(out: &mut Stdout, x0: u16, y0: u16, w: u16, h: u16, color: Color) ->
     bottom.extend(std::iter::repeat_n('\u{2500}', inner));
     bottom.push('\u{2518}');
 
-    queue!(
-        out,
-        MoveTo(x0, y0),
-        SetForegroundColor(color),
-        Print(&top)
-    )?;
+    queue!(out, MoveTo(x0, y0), SetForegroundColor(color), Print(&top))?;
     for r in 1..h.saturating_sub(1) {
         queue!(
             out,
@@ -339,30 +330,40 @@ fn draw_box(out: &mut Stdout, x0: u16, y0: u16, w: u16, h: u16, color: Color) ->
             Print('\u{2502}')
         )?;
     }
-    queue!(out, MoveTo(x0, y0 + h.saturating_sub(1)), Print(&bottom), ResetColor)?;
+    queue!(
+        out,
+        MoveTo(x0, y0 + h.saturating_sub(1)),
+        Print(&bottom),
+        ResetColor
+    )?;
     Ok(())
 }
 
 fn draw_picker(out: &mut Stdout, cfg: &Config, selected: usize) -> Result<()> {
     let (term_w, term_h) = terminal::size()?;
     let now = Local::now();
-    let primary = color::parse(&cfg.color);
     let accent = color::parse(&cfg.accent_color);
 
     let n = Face::ALL.len();
-    let rows = n.div_ceil(PICKER_COLS);
-    let cell_w: u16 = 30;
-    let cell_h: u16 = 9;
-    let box_w = cell_w + 2;
-    let box_h = cell_h + 2;
-    let gap_x: u16 = 3;
-    let gap_y: u16 = 1;
+    let grid_rows = n.div_ceil(PICKER_COLS);
+    let gap_x: u16 = 2;
+    let gap_y: u16 = 0;
     let label_h: u16 = 1;
 
+    // Size cells to the terminal so the grid fills the screen too.
+    let box_w = ((term_w.saturating_sub(4) - gap_x * (PICKER_COLS as u16 - 1))
+        / PICKER_COLS as u16)
+        .clamp(16, 46);
+    let box_h = ((term_h.saturating_sub(4)) / grid_rows as u16)
+        .saturating_sub(label_h + gap_y)
+        .clamp(6, 14);
+    let cell_w = box_w.saturating_sub(2);
+    let cell_h = box_h.saturating_sub(2);
+
     let total_w = PICKER_COLS as u16 * box_w + (PICKER_COLS as u16 - 1) * gap_x;
-    let total_h = rows as u16 * (box_h + label_h) + (rows as u16 - 1) * gap_y;
+    let total_h = grid_rows as u16 * (box_h + label_h + gap_y);
     let start_col = term_w.saturating_sub(total_w) / 2;
-    let start_row = term_h.saturating_sub(total_h + 2) / 2;
+    let start_row = term_h.saturating_sub(total_h + 1) / 2;
 
     for (i, face) in Face::ALL.iter().enumerate() {
         let col = (i % PICKER_COLS) as u16;
@@ -374,18 +375,29 @@ fn draw_picker(out: &mut Stdout, cfg: &Config, selected: usize) -> Result<()> {
 
         draw_box(out, x0, y0, box_w, box_h, border)?;
 
-        let lines = mini_render(*face, now, cfg);
-        let top_pad = (cell_h as usize).saturating_sub(lines.len()) / 2;
-        for (ri, line) in lines.iter().take(cell_h as usize).enumerate() {
-            let text: String = line.chars().take(cell_w as usize).collect();
-            let pad = (cell_w as usize).saturating_sub(text.chars().count()) / 2;
+        let lines = mini_render(*face, now, cfg, cell_w as usize, cell_h as usize);
+        let shown = lines.len().min(cell_h as usize);
+        let top_pad = (cell_h as usize).saturating_sub(shown) / 2;
+        let inner_w = render::block_width(&lines).min(cell_w as usize);
+
+        for (ri, l) in lines.iter().take(shown).enumerate() {
+            let pad = (cell_w as usize).saturating_sub(inner_w) / 2
+                + inner_w.saturating_sub(render::line_width(l)) / 2;
             queue!(
                 out,
-                MoveTo(x0 + 1 + pad as u16, y0 + 1 + (top_pad + ri) as u16),
-                SetForegroundColor(primary),
-                Print(&text),
-                ResetColor
+                MoveTo(x0 + 1 + pad as u16, y0 + 1 + (top_pad + ri) as u16)
             )?;
+            let mut used = 0usize;
+            for s in l {
+                let room = (cell_w as usize).saturating_sub(pad + used);
+                if room == 0 {
+                    break;
+                }
+                let text: String = s.text.chars().take(room).collect();
+                used += text.chars().count();
+                queue!(out, SetForegroundColor(s.color), Print(&text))?;
+            }
+            queue!(out, ResetColor)?;
         }
 
         let label = face.to_string().to_uppercase();
@@ -403,7 +415,10 @@ fn draw_picker(out: &mut Stdout, cfg: &Config, selected: usize) -> Result<()> {
     let hint_len = hint.chars().count() as u16;
     queue!(
         out,
-        MoveTo(term_w.saturating_sub(hint_len) / 2, start_row + total_h + 1),
+        MoveTo(
+            term_w.saturating_sub(hint_len) / 2,
+            (start_row + total_h).min(term_h.saturating_sub(1))
+        ),
         SetForegroundColor(Color::DarkGrey),
         Print(hint),
         ResetColor

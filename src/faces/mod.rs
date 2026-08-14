@@ -1,5 +1,9 @@
 pub mod analog;
+pub mod bars;
 pub mod binary;
 pub mod digital;
+pub mod flip;
 pub mod matrix;
+pub mod rings;
+pub mod roman;
 pub mod word;
