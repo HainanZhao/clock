@@ -234,6 +234,7 @@ fn render_face(face: Face, now: DateTime<Local>, cfg: &Config, w: usize, h: usiz
         Face::Roman => faces::roman::render(now, cfg, w, h),
         Face::Lcd => faces::lcd::render(now, cfg, w, h),
         Face::Hourglass => faces::hourglass::render(now, cfg, w, h),
+        Face::Blocks => faces::blocks::render(now, cfg, w, h),
     }
 }
 

@@ -1,6 +1,7 @@
 pub mod analog;
 pub mod bars;
 pub mod binary;
+pub mod blocks;
 pub mod digital;
 pub mod flip;
 pub mod hourglass;

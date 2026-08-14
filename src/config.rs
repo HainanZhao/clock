@@ -25,11 +25,12 @@ pub enum Face {
     Roman,
     Lcd,
     Hourglass,
+    Blocks,
 }
 
 impl Face {
     /// All faces, in the order they're cycled through and shown in the picker grid.
-    pub const ALL: [Face; 11] = [
+    pub const ALL: [Face; 12] = [
         Face::Digital,
         Face::Analog,
         Face::Binary,
@@ -41,6 +42,7 @@ impl Face {
         Face::Roman,
         Face::Lcd,
         Face::Hourglass,
+        Face::Blocks,
     ];
 
     fn index(self) -> usize {
@@ -70,6 +72,7 @@ impl fmt::Display for Face {
             Face::Roman => write!(f, "roman"),
             Face::Lcd => write!(f, "lcd"),
             Face::Hourglass => write!(f, "hourglass"),
+            Face::Blocks => write!(f, "blocks"),
         }
     }
 }

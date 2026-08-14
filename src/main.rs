@@ -4,6 +4,7 @@ mod color;
 mod config;
 mod faces;
 mod render;
+mod seg7;
 mod vector;
 
 use anyhow::{bail, Result};
@@ -177,10 +178,11 @@ fn set_field(cfg: &mut Config, key: &str, value: &str) -> Result<()> {
                 "rings" => Face::Rings,
                 "roman" => Face::Roman,
                 "lcd" => Face::Lcd,
+                "blocks" => Face::Blocks,
                 "hourglass" => Face::Hourglass,
                 other => bail!(
                     "unknown face '{other}' (expected one of: digital, analog, binary, word, \
-                     matrix, flip, bars, rings, roman, lcd, hourglass)"
+                     matrix, flip, bars, rings, roman, lcd, hourglass, blocks)"
                 ),
             }
         }

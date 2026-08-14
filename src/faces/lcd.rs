@@ -1,13 +1,18 @@
-//! Seven-segment clock, as on an LCD panel: thick straight bars with a small
-//! gap at every joint, and the unlit segments left faintly visible the way a
-//! real display shows them.
+//! Seven-segment clock — a digitized number, not a typeface.
+//!
+//! The digits come from [`crate::seg7`], which lays the seven bars out
+//! directly in terminal cells from integer thicknesses. Nothing is sampled or
+//! scaled from an outline, so the bars are exact at every size.
 
 use crate::color;
-use crate::config::{Config, MAX_CAP_PX};
+use crate::config::Config;
 use crate::faces::digital::{blink_mask, time_text};
 use crate::render::{self, Line};
-use crate::vector::{self, Style};
+use crate::seg7;
 use chrono::{DateTime, Local};
+
+/// Cap on the unit size, so a huge terminal doesn't give absurdly fat bars.
+const MAX_UNIT: usize = 12;
 
 pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize) -> Vec<Line> {
     let (text, colons, suffix) = time_text(now, cfg);
@@ -20,37 +25,20 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     if cfg.show_date {
         reserved += 2;
     }
-    let h = cfg.resolve_height(vector::fit_height(
-        n,
-        avail_w,
-        avail_h.saturating_sub(reserved),
-        MAX_CAP_PX,
-    ));
+
+    let fit = seg7::fit_unit(&text, avail_w, avail_h.saturating_sub(reserved), MAX_UNIT);
+    // `scale` counts in units directly here; 0 stays auto.
+    let u = if cfg.is_auto_scale() {
+        fit
+    } else {
+        (cfg.scale as usize).clamp(1, MAX_UNIT)
+    };
 
     let primary = color::parse(&cfg.color);
     let accent = color::parse(&cfg.accent_color);
     let mask = blink_mask(now, cfg, n, &colons);
 
-    // The unlit segments of every digit, drawn first and very dim: it is what
-    // makes the face read as a panel rather than as floating bars.
-    let mut lines = if cfg.ghost_segments {
-        let all_on: String = text
-            .chars()
-            .map(|c| if c == ':' { ':' } else { '8' })
-            .collect();
-        let ghost = color::dim(primary, 0.16);
-        let lit = vector::render_styled(&text, h, &mask, &|_| primary, Style::Segment);
-        let panel = vector::render_styled(&all_on, h, &[], &|_| ghost, Style::Segment);
-        overlay(panel, lit, primary, accent, ghost)
-    } else {
-        vector::render_styled(
-            &text,
-            h,
-            &mask,
-            &|t| color::lerp(primary, accent, t),
-            Style::Segment,
-        )
-    };
+    let mut lines = seg7::render(&text, u, &mask, &|t| color::lerp(primary, accent, t));
 
     if !suffix.is_empty() {
         lines.push(render::blank());
@@ -64,50 +52,4 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
         ));
     }
     lines
-}
-
-/// Merges the dim all-segments-on panel with the lit digits on top, so a cell
-/// takes the lit color wherever the digit covers it and the ghost color where
-/// only the panel does. Both renders share a size, so cells line up 1:1.
-fn overlay(
-    panel: Vec<Line>,
-    lit: Vec<Line>,
-    primary: crossterm::style::Color,
-    accent: crossterm::style::Color,
-    ghost: crossterm::style::Color,
-) -> Vec<Line> {
-    let flatten = |lines: &[Line]| -> Vec<Vec<char>> {
-        lines
-            .iter()
-            .map(|l| l.iter().flat_map(|s| s.text.chars()).collect())
-            .collect()
-    };
-    let panel_rows = flatten(&panel);
-    let lit_rows = flatten(&lit);
-    let width = panel_rows.iter().map(|r| r.len()).max().unwrap_or(0);
-
-    panel_rows
-        .iter()
-        .enumerate()
-        .map(|(y, prow)| {
-            let empty = Vec::new();
-            let lrow = lit_rows.get(y).unwrap_or(&empty);
-            let mut out: Line = Vec::new();
-            for x in 0..width {
-                let lc = lrow.get(x).copied().unwrap_or(' ');
-                let pc = prow.get(x).copied().unwrap_or(' ');
-                let (ch, c) = if lc != ' ' {
-                    let t = x as f64 / (width.max(2) - 1) as f64;
-                    (lc, color::lerp(primary, accent, t))
-                } else {
-                    (pc, ghost)
-                };
-                match out.last_mut() {
-                    Some(last) if last.color == c => last.text.push(ch),
-                    _ => out.push(render::span(ch.to_string(), c)),
-                }
-            }
-            out
-        })
-        .collect()
 }
