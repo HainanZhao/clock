@@ -105,9 +105,13 @@ fn next_wake(cfg: &Config, now: DateTime<Local>) -> Duration {
     );
     let blinks = cfg.blink_colon && matches!(cfg.face, Face::Digital | Face::Matrix | Face::Flip | Face::Lcd | Face::Grid);
     
-    let period_ms: i64 = if cfg.face == Face::Warp {
-        33 // 30 FPS high-smoothness refresh rate!
-    } else if blinks {
+    if cfg.face == Face::Warp {
+        // High-smoothness continuous 60 FPS animation loop!
+        // Sleeping for exactly 16ms between frames ensures buttery-smooth, uniform pacing.
+        return Duration::from_millis(16);
+    }
+
+    let period_ms: i64 = if blinks {
         500
     } else if cfg.show_seconds || animated {
         1000
