@@ -92,14 +92,25 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
             }
 
             let (ch, c) = if i < done {
-                // Elapsed: ramp across the day so the hours read as bands.
+                // Ramp across the day, then alternate the tint every hour so
+                // the 24 hour bands are legible instead of one solid mass.
                 let t = i as f64 / total.max(2) as f64;
-                ('\u{2588}', color::lerp(primary, accent, t))
+                let base = color::lerp(primary, accent, t);
+                let hour = (i * step) / 3600;
+                let shade = if hour % 2 == 0 { 1.0 } else { 0.62 };
+                ('\u{2588}', color::dim(base, shade))
             } else if i == done {
                 // The block currently filling.
                 ('\u{2588}', color::hue(color::SECOND_HUE))
             } else {
-                ('\u{00b7}', spent)
+                // Unspent, also banded so the remaining hours stay readable.
+                let hour = (i * step) / 3600;
+                let c = if hour % 2 == 0 {
+                    spent
+                } else {
+                    color::dim(primary, 0.07)
+                };
+                ('\u{00b7}', c)
             };
             match l.last_mut() {
                 Some(last) if last.color == c => last.text.push(ch),

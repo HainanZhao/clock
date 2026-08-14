@@ -1,6 +1,6 @@
 # clock
 
-A beautiful, configurable clock for your terminal with 11 faces — written in
+A beautiful, configurable clock for your terminal with 12 faces — written in
 Rust, ships as a single lightweight binary, idles at ~0% CPU.
 
 ```
@@ -36,6 +36,7 @@ Rust, ships as a single lightweight binary, idles at ~0% CPU.
 | `roman`   | Roman numerals, stacked and oversized                        |
 | `lcd`     | Thick seven-segment bars with solid corners                   |
 | `hourglass` | Sand draining through a glass, once per hour                |
+| `blocks`  | The whole day as a grid of blocks, one lit per interval passed |
 
 Switch faces live with the Left/Right arrow keys, or press `Tab` for a
 picker grid showing a live preview of every face at once.
@@ -153,11 +154,13 @@ vertically and leave curves visibly stepped along the horizontal axis.
 Edges are hard rather than anti-aliased: blending partial coverage toward the
 background reads as a grey halo around the strokes rather than as smoothing.
 
-The `lcd` face swaps those curves for seven-segment bars, drawn as rectangles
-snapped to whole cells so that every covered cell is a full block and the
-corners come out solid. Its bars deliberately overlap where they meet — inset
-them to leave the gaps of a real panel and the digits fall apart into loose
-blocks at the sizes a terminal gives you.
+The `lcd` face does not use that pipeline at all. A seven-segment number is
+already discrete — three horizontal bars and four vertical ones on a small
+integer grid — so there is nothing to rasterize. Its bars are laid out
+directly in cells from integer thicknesses, which is exact at every size: no
+partial coverage, no stray single-cell spikes, no gaps that round away to
+nothing. Rasterizing outlines onto a grid ten cells wide is what produces
+those artifacts, and no amount of snapping or chamfering fixes the mismatch.
 
 ## Why it's lightweight
 
