@@ -36,7 +36,12 @@ fn get_stars() -> &'static [Star] {
             let speed = 0.25 + (seed_sp - seed_sp.floor()) * 0.35;
             let start_z = seed_z - seed_z.floor();
 
-            stars.push(Star { rx, ry, speed, start_z });
+            stars.push(Star {
+                rx,
+                ry,
+                speed,
+                start_z,
+            });
         }
         stars
     })
@@ -74,7 +79,7 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     for star in stars {
         // Current depth z loops smoothly from 1.0 (far) down to 0.0 (near)
         let z = (star.start_z - t * star.speed).rem_euclid(1.0);
-        
+
         // Skip stars that are too close to prevent division by zero / infinite stretching
         if z < 0.04 {
             continue;
@@ -135,13 +140,21 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
                 let cx_offset = i - card_left;
                 let cy_offset = r_idx - card_top;
                 let (ch, color) = if cy_offset == 0 {
-                    if cx_offset == 0 { ('\u{250c}', border_c) }
-                    else if cx_offset == card_w - 1 { ('\u{2510}', border_c) }
-                    else { ('\u{2500}', border_c) }
+                    if cx_offset == 0 {
+                        ('\u{250c}', border_c)
+                    } else if cx_offset == card_w - 1 {
+                        ('\u{2510}', border_c)
+                    } else {
+                        ('\u{2500}', border_c)
+                    }
                 } else if cy_offset == card_h - 1 {
-                    if cx_offset == 0 { ('\u{2514}', border_c) }
-                    else if cx_offset == card_w - 1 { ('\u{2518}', border_c) }
-                    else { ('\u{2500}', border_c) }
+                    if cx_offset == 0 {
+                        ('\u{2514}', border_c)
+                    } else if cx_offset == card_w - 1 {
+                        ('\u{2518}', border_c)
+                    } else {
+                        ('\u{2500}', border_c)
+                    }
                 } else {
                     if cx_offset == 0 || cx_offset == card_w - 1 {
                         ('\u{2502}', border_c)

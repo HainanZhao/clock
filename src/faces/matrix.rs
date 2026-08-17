@@ -43,7 +43,13 @@ fn total_px_w(text: &str, scale: usize) -> f64 {
     let n = text.chars().count();
     let sum: f64 = text
         .chars()
-        .map(|c| if c == ':' { colon_w(scale) } else { digit_w(scale) })
+        .map(|c| {
+            if c == ':' {
+                colon_w(scale)
+            } else {
+                digit_w(scale)
+            }
+        })
         .sum();
     sum + gutter(scale) * (n.max(1) - 1) as f64
 }
@@ -103,7 +109,11 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     let fit = (1..=MAX_SCALE as usize)
         .rev()
         .find(|&s| {
-            let fit_text = if cfg.show_seconds { text.to_string() } else { format!("{}:00", text) };
+            let fit_text = if cfg.show_seconds {
+                text.to_string()
+            } else {
+                format!("{}:00", text)
+            };
             ((total_px_w(&fit_text, s) / 2.0).ceil() as usize) < avail_w
                 && ((digit_h(s) / 4.0).ceil() as usize) < usable_h
         })

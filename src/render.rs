@@ -32,7 +32,10 @@ pub fn blank() -> Line {
 pub fn line_width(l: &Line) -> usize {
     l.iter()
         .map(|s| {
-            s.text.chars().map(|c| if c == '🐱' { 2 } else { 1 }).sum::<usize>()
+            s.text
+                .chars()
+                .map(|c| if c == '🐱' { 2 } else { 1 })
+                .sum::<usize>()
         })
         .sum()
 }
@@ -66,7 +69,6 @@ pub fn gradient_block(lines: &[String], from: Color, to: Color) -> Vec<Line> {
         })
         .collect()
 }
-
 
 /// Pads every line out to `width` with equal space either side.
 ///

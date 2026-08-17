@@ -30,6 +30,7 @@ pub enum Face {
     Ship,
     Grid,
     Warp,
+    Snake,
 }
 
 impl<'de> Deserialize<'de> for Face {
@@ -56,6 +57,7 @@ impl<'de> Deserialize<'de> for Face {
             "ship" => Face::Ship,
             "grid" => Face::Grid,
             "warp" => Face::Warp,
+            "snake" => Face::Snake,
             _ => Face::Digital, // Fallback to the first clock face if variant is unknown
         })
     }
@@ -63,7 +65,7 @@ impl<'de> Deserialize<'de> for Face {
 
 impl Face {
     /// All faces, in the order they're cycled through and shown in the picker grid.
-    pub const ALL: [Face; 17] = [
+    pub const ALL: [Face; 18] = [
         Face::Digital,
         Face::Analog,
         Face::Binary,
@@ -81,6 +83,7 @@ impl Face {
         Face::Ship,
         Face::Grid,
         Face::Warp,
+        Face::Snake,
     ];
 
     fn index(self) -> usize {
@@ -116,6 +119,7 @@ impl fmt::Display for Face {
             Face::Ship => write!(f, "ship"),
             Face::Grid => write!(f, "grid"),
             Face::Warp => write!(f, "warp"),
+            Face::Snake => write!(f, "snake"),
         }
     }
 }
@@ -125,6 +129,12 @@ fn default_true() -> bool {
 }
 fn default_false() -> bool {
     false
+}
+fn default_trigger_offset() -> u32 {
+    3
+}
+fn default_alarm_name() -> String {
+    "Alarm".to_string()
 }
 fn default_second_step() -> u32 {
     1
@@ -147,6 +157,88 @@ fn default_color() -> String {
 /// color to explicitly enable dual-color gradients.
 fn default_accent() -> String {
     "none".to_string()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum Recurrence {
+    Once,
+    Daily,
+    Weekly,
+    BiWeekly,
+    Weekday,
+    Weekend,
+}
+
+impl fmt::Display for Recurrence {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Recurrence::Once => write!(f, "once"),
+            Recurrence::Daily => write!(f, "daily"),
+            Recurrence::Weekly => write!(f, "weekly"),
+            Recurrence::BiWeekly => write!(f, "bi-weekly"),
+            Recurrence::Weekday => write!(f, "weekday"),
+            Recurrence::Weekend => write!(f, "weekend"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Alarm {
+    #[serde(default = "default_alarm_name")]
+    pub name: String,
+    pub time: String, // "HH:MM"
+    pub recurrence: Recurrence,
+    pub start_date: String, // "YYYY-MM-DD"
+    #[serde(default)]
+    pub day_of_week: Option<String>,
+    #[serde(default = "default_trigger_offset")]
+    pub trigger_offset_min: u32,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for Alarm {
+    fn default() -> Self {
+        Self {
+            name: "Alarm".to_string(),
+            time: "08:00".to_string(),
+            recurrence: Recurrence::Once,
+            start_date: "".to_string(),
+            day_of_week: None,
+            trigger_offset_min: default_trigger_offset(),
+            enabled: true,
+        }
+    }
+}
+
+impl Alarm {
+    pub fn get_start_date(&self) -> Option<chrono::NaiveDate> {
+        chrono::NaiveDate::parse_from_str(&self.start_date, "%Y-%m-%d").ok()
+    }
+
+    pub fn get_time(&self) -> Option<chrono::NaiveTime> {
+        chrono::NaiveTime::parse_from_str(&self.time, "%H:%M").ok()
+    }
+
+    pub fn get_day_of_week(&self) -> chrono::Weekday {
+        use chrono::Datelike;
+        if let Some(ref dow_str) = self.day_of_week {
+            match dow_str.to_ascii_lowercase().as_str() {
+                "monday" | "mon" => chrono::Weekday::Mon,
+                "tuesday" | "tue" => chrono::Weekday::Tue,
+                "wednesday" | "wed" => chrono::Weekday::Wed,
+                "thursday" | "thu" => chrono::Weekday::Thu,
+                "friday" | "fri" => chrono::Weekday::Fri,
+                "saturday" | "sat" => chrono::Weekday::Sat,
+                "sunday" | "sun" => chrono::Weekday::Sun,
+                _ => chrono::Weekday::Mon,
+            }
+        } else {
+            self.get_start_date()
+                .map_or(chrono::Weekday::Mon, |d| d.weekday())
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +280,9 @@ pub struct Config {
     pub second_step: u32,
     /// Optional alarm time in "HH:MM" format (24-hour).
     pub alarm: Option<String>,
+    /// Multiple configurable alarms.
+    #[serde(default)]
+    pub alarms: Vec<Alarm>,
 }
 
 impl Default for Config {
@@ -205,6 +300,7 @@ impl Default for Config {
             ghost_segments: false,
             second_step: default_second_step(),
             alarm: None,
+            alarms: Vec::new(),
         }
     }
 }
@@ -226,7 +322,8 @@ impl Config {
 
     /// Where the config file lives on this platform.
     pub fn path() -> Result<PathBuf> {
-        let dir = dirs::config_dir().context("could not determine the platform config directory")?;
+        let dir =
+            dirs::config_dir().context("could not determine the platform config directory")?;
         Ok(dir.join("clock").join("config.toml"))
     }
 

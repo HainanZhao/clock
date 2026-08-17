@@ -1,9 +1,9 @@
 //! Roman numeral clock — the time as IX : XLV, in big block letters.
 
-use crate::vector;
 use crate::color;
 use crate::config::{Config, MAX_CAP_PX};
 use crate::render::{self, Line};
+use crate::vector;
 use chrono::{DateTime, Local, Timelike};
 
 fn to_roman(mut n: u32) -> String {
@@ -85,12 +85,7 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     }
     let usable_h = avail_h.saturating_sub(reserved);
     let per_part_h = usable_h.saturating_sub(parts.len() - 1) / parts.len().max(1);
-    let h = cfg.resolve_height(vector::fit_height(
-        longest,
-        avail_w,
-        per_part_h,
-        MAX_CAP_PX,
-    ));
+    let h = cfg.resolve_height(vector::fit_height(longest, avail_w, per_part_h, MAX_CAP_PX));
 
     let mut lines: Vec<Line> = Vec::new();
     for (i, part) in parts.iter().enumerate() {
@@ -110,7 +105,11 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     if cfg.hour12 {
         lines.push(render::blank());
         lines.push(render::line(
-            if now.hour() < 12 { "ANTE MERIDIEM" } else { "POST MERIDIEM" },
+            if now.hour() < 12 {
+                "ANTE MERIDIEM"
+            } else {
+                "POST MERIDIEM"
+            },
             accent,
         ));
     }

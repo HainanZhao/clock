@@ -147,8 +147,13 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
             }
 
             // Blink colons if configured
-            let is_blinked = colons.contains(&i) && cfg.blink_colon && now.timestamp_millis() / 500 % 2 == 0;
-            let grid = if is_blinked { [[false; 3]; 5] } else { digit_grid(c) };
+            let is_blinked =
+                colons.contains(&i) && cfg.blink_colon && now.timestamp_millis() / 500 % 2 == 0;
+            let grid = if is_blinked {
+                [[false; 3]; 5]
+            } else {
+                digit_grid(c)
+            };
 
             for col in 0..3 {
                 if col > 0 {

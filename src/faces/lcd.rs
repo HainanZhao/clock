@@ -26,7 +26,13 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
         reserved += 2;
     }
 
-    let fit = seg7::fit_unit(&text, cfg.show_seconds, avail_w, avail_h.saturating_sub(reserved), MAX_UNIT);
+    let fit = seg7::fit_unit(
+        &text,
+        cfg.show_seconds,
+        avail_w,
+        avail_h.saturating_sub(reserved),
+        MAX_UNIT,
+    );
     // `scale` counts in units directly here; 0 stays auto.
     let u = if cfg.is_auto_scale() {
         fit
@@ -38,7 +44,9 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     let accent = color::parse(&cfg.accent_color);
     let mask = blink_mask(now, cfg, n, &colons);
 
-    let mut lines = seg7::render(&text, u, &mask, cfg.ghost_segments, &|t| color::lerp(primary, accent, t));
+    let mut lines = seg7::render(&text, u, &mask, cfg.ghost_segments, &|t| {
+        color::lerp(primary, accent, t)
+    });
 
     if !suffix.is_empty() {
         lines.push(render::blank());

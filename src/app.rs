@@ -5,9 +5,11 @@ use crate::config::{Config, Face, MAX_SCALE};
 use crate::faces;
 use crate::render::{self, Line};
 use anyhow::Result;
-use chrono::{DateTime, Local, Timelike};
+use chrono::{DateTime, Datelike, Local, Timelike};
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, EnableMouseCapture, DisableMouseCapture};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+};
 use crossterm::style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor};
 use crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{execute, queue};
@@ -19,9 +21,8 @@ const HELP_ITEMS: &[&str] = &[
     "tab picker",
     "c color",
     "t 12/24h",
-    "s seconds",
     "+/- size",
-    "0 auto",
+    "a alarms",
     "q quit",
 ];
 const PICKER_COLS: usize = 3;
@@ -47,6 +48,141 @@ pub fn run(mut cfg: Config) -> Result<()> {
     persist_session(&started_with, &cfg);
 
     result
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActiveAlarm {
+    index: usize,
+    candidate_date: chrono::NaiveDate,
+}
+
+fn check_active_alarm(
+    cfg: &Config,
+    now: DateTime<Local>,
+    dismissed: &[(usize, chrono::NaiveDate)],
+) -> Option<ActiveAlarm> {
+    let now_naive = now.naive_local();
+    for (i, alarm) in cfg.alarms.iter().enumerate() {
+        if !alarm.enabled {
+            continue;
+        }
+        let alarm_time = match alarm.get_time() {
+            Some(t) => t,
+            None => continue,
+        };
+        let start_date = match alarm.get_start_date() {
+            Some(d) => d,
+            None => continue,
+        };
+
+        for day_offset in 0..=1 {
+            let candidate_date = now.date_naive() + chrono::Duration::days(day_offset);
+            if candidate_date < start_date {
+                continue;
+            }
+
+            if dismissed
+                .iter()
+                .any(|(idx, date)| *idx == i && *date == candidate_date)
+            {
+                continue;
+            }
+
+            let matches_recurrence = match alarm.recurrence {
+                crate::config::Recurrence::Once => candidate_date == start_date,
+                crate::config::Recurrence::Daily => true,
+                crate::config::Recurrence::Weekly => {
+                    candidate_date.weekday() == alarm.get_day_of_week()
+                }
+                crate::config::Recurrence::BiWeekly => {
+                    let diff = (candidate_date - start_date).num_days();
+                    diff >= 0 && diff % 14 == 0
+                }
+                crate::config::Recurrence::Weekday => {
+                    let wd = candidate_date.weekday();
+                    wd != chrono::Weekday::Sat && wd != chrono::Weekday::Sun
+                }
+                crate::config::Recurrence::Weekend => {
+                    let wd = candidate_date.weekday();
+                    wd == chrono::Weekday::Sat || wd == chrono::Weekday::Sun
+                }
+            };
+
+            if matches_recurrence {
+                let scheduled_dt = candidate_date.and_time(alarm_time);
+                let trigger_start =
+                    scheduled_dt - chrono::Duration::minutes(alarm.trigger_offset_min as i64);
+                if now_naive >= trigger_start
+                    && now_naive < scheduled_dt + chrono::Duration::minutes(5)
+                {
+                    return Some(ActiveAlarm {
+                        index: i,
+                        candidate_date,
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
+fn duration_until_next_trigger(cfg: &Config, now: DateTime<Local>) -> Option<Duration> {
+    let mut min_dur: Option<Duration> = None;
+    let now_naive = now.naive_local();
+
+    for alarm in &cfg.alarms {
+        if !alarm.enabled {
+            continue;
+        }
+        let alarm_time = match alarm.get_time() {
+            Some(t) => t,
+            None => continue,
+        };
+        let start_date = match alarm.get_start_date() {
+            Some(d) => d,
+            None => continue,
+        };
+
+        for day_offset in 0..=2 {
+            let candidate_date = now.date_naive() + chrono::Duration::days(day_offset);
+            if candidate_date < start_date {
+                continue;
+            }
+
+            let matches_recurrence = match alarm.recurrence {
+                crate::config::Recurrence::Once => candidate_date == start_date,
+                crate::config::Recurrence::Daily => true,
+                crate::config::Recurrence::Weekly => {
+                    candidate_date.weekday() == alarm.get_day_of_week()
+                }
+                crate::config::Recurrence::BiWeekly => {
+                    let diff = (candidate_date - start_date).num_days();
+                    diff >= 0 && diff % 14 == 0
+                }
+                crate::config::Recurrence::Weekday => {
+                    let wd = candidate_date.weekday();
+                    wd != chrono::Weekday::Sat && wd != chrono::Weekday::Sun
+                }
+                crate::config::Recurrence::Weekend => {
+                    let wd = candidate_date.weekday();
+                    wd == chrono::Weekday::Sat || wd == chrono::Weekday::Sun
+                }
+            };
+
+            if matches_recurrence {
+                let scheduled_dt = candidate_date.and_time(alarm_time);
+                let trigger_start =
+                    scheduled_dt - chrono::Duration::minutes(alarm.trigger_offset_min as i64);
+                if trigger_start > now_naive {
+                    let dur = trigger_start - now_naive;
+                    if let Ok(std_dur) = dur.to_std() {
+                        min_dur = Some(min_dur.map_or(std_dur, |m| m.min(std_dur)));
+                    }
+                }
+            }
+        }
+    }
+    min_dur
 }
 
 /// Saves the settings the user can change from the keyboard. Failures are
@@ -79,17 +215,33 @@ fn persist_session(before: &Config, after: &Config) {
 /// wake as often as the display can actually change: every 500ms to blink
 /// a colon, every second to advance a seconds readout, or — with seconds
 /// hidden — only once a minute.
-fn next_wake(cfg: &Config, now: DateTime<Local>) -> Duration {
+fn next_wake(cfg: &Config, now: DateTime<Local>, active_alarm: bool) -> Duration {
     let animated = matches!(
         cfg.face,
-        Face::Analog | Face::Rings | Face::Hourglass | Face::Cuckoo | Face::Radar | Face::Ship | Face::Warp
+        Face::Analog
+            | Face::Rings
+            | Face::Hourglass
+            | Face::Cuckoo
+            | Face::Radar
+            | Face::Ship
+            | Face::Warp
     );
-    let blinks = cfg.blink_colon && matches!(cfg.face, Face::Digital | Face::Matrix | Face::Flip | Face::Lcd | Face::Grid);
-    
+    let blinks = cfg.blink_colon
+        && matches!(
+            cfg.face,
+            Face::Digital | Face::Matrix | Face::Flip | Face::Lcd | Face::Grid
+        );
+
     if cfg.face == Face::Warp {
         // High-smoothness continuous 60 FPS animation loop!
         // Sleeping for exactly 16ms between frames ensures buttery-smooth, uniform pacing.
         return Duration::from_millis(16);
+    }
+
+    if cfg.face == Face::Snake {
+        // Classic arcade snake speed — fast enough to read as movement, slow
+        // enough that each step is legible in a terminal grid.
+        return Duration::from_millis(crate::faces::snake::TICK_MS as u64);
     }
 
     let in_alarm_minute = if let Some(alarm_time) = cfg.resolve_alarm() {
@@ -98,18 +250,25 @@ fn next_wake(cfg: &Config, now: DateTime<Local>) -> Duration {
         false
     };
 
-    let period_ms: i64 = if in_alarm_minute {
-        1000 // Pulse smoothly every second during the alarm!
+    let period_ms: i64 = if active_alarm || in_alarm_minute {
+        250 // Pulse smoothly multiple times a second during the alarm!
     } else if blinks {
         500
     } else if cfg.show_seconds || animated {
-        1000
+        250 // Wake up 4 times a second for buttery smooth seconds!
     } else {
         60_000
     };
     let ms = now.timestamp_millis();
     let remainder = period_ms - ms.rem_euclid(period_ms);
-    Duration::from_millis(remainder.clamp(10, period_ms) as u64)
+    let mut sleep_dur = Duration::from_millis(remainder.clamp(10, period_ms) as u64);
+
+    if let Some(until_trigger) = duration_until_next_trigger(cfg, now) {
+        if until_trigger < sleep_dur {
+            sleep_dur = until_trigger.max(Duration::from_millis(10));
+        }
+    }
+    sleep_dur
 }
 
 /// Moves the picker's grid selection by (dcol, drow), clamping at the grid
@@ -133,29 +292,217 @@ fn move_selection(selected: usize, dcol: i32, drow: i32) -> usize {
 fn event_loop(out: &mut Stdout, cfg: &mut Config) -> Result<()> {
     let mut needs_clear = true;
     let mut picker: Option<usize> = None;
+    let mut alarm_manager: Option<usize> = None;
+    let mut selected_col: usize = 0;
+    let mut active_alarm: Option<ActiveAlarm> = None;
+    let mut dismissed_occurrences: Vec<(usize, chrono::NaiveDate)> = Vec::new();
+    let mut last_beep_second: Option<u32> = None;
 
     loop {
+        let now = Local::now();
+        if active_alarm.is_none() {
+            active_alarm = check_active_alarm(cfg, now, &dismissed_occurrences);
+        } else if let Some(ref active) = active_alarm {
+            let still_valid = if active.index < cfg.alarms.len() {
+                let alarm = &cfg.alarms[active.index];
+                if alarm.enabled {
+                    if let Some(alarm_time) = alarm.get_time() {
+                        let scheduled_dt = active.candidate_date.and_time(alarm_time);
+                        let trigger_start = scheduled_dt - chrono::Duration::minutes(1);
+                        let now_naive = now.naive_local();
+                        now_naive >= trigger_start
+                            && now_naive < scheduled_dt + chrono::Duration::minutes(5)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if !still_valid {
+                active_alarm = None;
+                needs_clear = true;
+            }
+        }
+
+        let current_second = now.second();
+        if active_alarm.is_some() && current_second % 2 == 0 {
+            if last_beep_second != Some(current_second) {
+                last_beep_second = Some(current_second);
+                let _ = out.write_all(b"\x07");
+                let _ = out.flush();
+            }
+        }
+
         if needs_clear {
             queue!(out, Clear(ClearType::All))?;
             needs_clear = false;
         }
-        match picker {
-            Some(selected) => draw_picker(out, cfg, selected)?,
-            None => draw(out, cfg)?,
+        if let Some(selected) = alarm_manager {
+            draw_alarm_manager(out, cfg, selected, selected_col)?;
+        } else {
+            match picker {
+                Some(selected) => draw_picker(out, cfg, selected)?,
+                None => draw(out, cfg, active_alarm.is_some())?,
+            }
         }
+        let _ = out.write_all(b"\0");
         out.flush()?;
 
-        let wait = next_wake(cfg, Local::now());
+        let wait = next_wake(cfg, Local::now(), active_alarm.is_some());
         if event::poll(wait)? {
             match event::read()? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => {
-                    if let Some(selected) = picker {
+                    if let Some(active) = active_alarm.take() {
+                        dismissed_occurrences.push((active.index, active.candidate_date));
+                        if cfg.alarms[active.index].recurrence == crate::config::Recurrence::Once {
+                            cfg.alarms[active.index].enabled = false;
+                            let _ = cfg.save();
+                        }
+                        needs_clear = true;
+                        continue;
+                    }
+
+                    if let Some(selected) = alarm_manager {
+                        let fields = if cfg.alarms.is_empty() {
+                            vec![]
+                        } else {
+                            active_fields(&cfg.alarms[selected])
+                        };
+                        let max_cols = fields.len().max(1);
+
                         match k.code {
-                            KeyCode::Esc => {
+                            KeyCode::Esc | KeyCode::Char('q') => {
+                                alarm_manager = None;
+                                needs_clear = true;
+                            }
+                            KeyCode::Up => {
+                                if !cfg.alarms.is_empty() {
+                                    let new_selected = selected.saturating_sub(1);
+                                    alarm_manager = Some(new_selected);
+                                    let new_max_cols =
+                                        active_fields(&cfg.alarms[new_selected]).len();
+                                    selected_col = selected_col.min(new_max_cols - 1);
+                                }
+                            }
+                            KeyCode::Down => {
+                                if !cfg.alarms.is_empty() {
+                                    let new_selected = (selected + 1).min(cfg.alarms.len() - 1);
+                                    alarm_manager = Some(new_selected);
+                                    let new_max_cols =
+                                        active_fields(&cfg.alarms[new_selected]).len();
+                                    selected_col = selected_col.min(new_max_cols - 1);
+                                }
+                            }
+                            KeyCode::Left => {
+                                if !cfg.alarms.is_empty() {
+                                    selected_col = if selected_col == 0 {
+                                        max_cols - 1
+                                    } else {
+                                        selected_col - 1
+                                    };
+                                }
+                            }
+                            KeyCode::Right => {
+                                if !cfg.alarms.is_empty() {
+                                    selected_col = (selected_col + 1) % max_cols;
+                                }
+                            }
+                            KeyCode::Char('+') | KeyCode::Char('=') => {
+                                if !cfg.alarms.is_empty() && selected < cfg.alarms.len() {
+                                    if let Some(&field) = fields.get(selected_col) {
+                                        adjust_field(&mut cfg.alarms[selected], field, 1);
+                                        let _ = cfg.save();
+                                    }
+                                }
+                            }
+                            KeyCode::Char('-') => {
+                                if !cfg.alarms.is_empty() && selected < cfg.alarms.len() {
+                                    if let Some(&field) = fields.get(selected_col) {
+                                        adjust_field(&mut cfg.alarms[selected], field, -1);
+                                        let _ = cfg.save();
+                                    }
+                                }
+                            }
+                            KeyCode::Char(' ') | KeyCode::Enter => {
+                                if !cfg.alarms.is_empty() && selected < cfg.alarms.len() {
+                                    if let Some(&field) = fields.get(selected_col) {
+                                        if field == AlarmField::Name {
+                                            let _ = terminal::disable_raw_mode();
+                                            let _ = execute!(out, Show);
+
+                                            let (_, term_h) = terminal::size().unwrap_or((80, 24));
+                                            let _ =
+                                                execute!(out, MoveTo(0, term_h.saturating_sub(1)));
+                                            print!("\r\nEnter new alarm name (or leave empty to cancel): ");
+                                            let _ = std::io::stdout().flush();
+
+                                            let mut input = String::new();
+                                            if std::io::stdin().read_line(&mut input).is_ok() {
+                                                let trimmed = input.trim();
+                                                if !trimmed.is_empty() {
+                                                    cfg.alarms[selected].name = trimmed.to_string();
+                                                    let _ = cfg.save();
+                                                }
+                                            }
+
+                                            let _ = terminal::enable_raw_mode();
+                                            let _ = execute!(out, Hide);
+                                            needs_clear = true;
+                                        } else {
+                                            cfg.alarms[selected].enabled =
+                                                !cfg.alarms[selected].enabled;
+                                            let _ = cfg.save();
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Char('a') => {
+                                let new_alarm = crate::config::Alarm {
+                                    name: "Alarm".to_string(),
+                                    time: "08:00".to_string(),
+                                    recurrence: crate::config::Recurrence::Once,
+                                    start_date: Local::now().format("%Y-%m-%d").to_string(),
+                                    day_of_week: None,
+                                    trigger_offset_min: 3,
+                                    enabled: true,
+                                };
+                                cfg.alarms.push(new_alarm);
+                                let _ = cfg.save();
+                                alarm_manager = Some(cfg.alarms.len() - 1);
+                                selected_col = 0;
+                                needs_clear = true;
+                            }
+                            KeyCode::Char('d')
+                            | KeyCode::Char('x')
+                            | KeyCode::Backspace
+                            | KeyCode::Delete => {
+                                if selected < cfg.alarms.len() {
+                                    cfg.alarms.remove(selected);
+                                    let _ = cfg.save();
+                                    if cfg.alarms.is_empty() {
+                                        alarm_manager = Some(0);
+                                        selected_col = 0;
+                                    } else {
+                                        let new_selected = selected.min(cfg.alarms.len() - 1);
+                                        alarm_manager = Some(new_selected);
+                                        let new_max_cols =
+                                            active_fields(&cfg.alarms[new_selected]).len();
+                                        selected_col = selected_col.min(new_max_cols - 1);
+                                    }
+                                    needs_clear = true;
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else if let Some(selected) = picker {
+                        match k.code {
+                            KeyCode::Esc | KeyCode::Char('q') => {
                                 picker = None;
                                 needs_clear = true;
                             }
-                            KeyCode::Char('q') => break,
                             KeyCode::Enter => {
                                 cfg.face = Face::ALL[selected];
                                 picker = None;
@@ -173,6 +520,10 @@ fn event_loop(out: &mut Stdout, cfg: &mut Config) -> Result<()> {
                             KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
                                 break
                             }
+                            KeyCode::Char('a') => {
+                                alarm_manager = Some(0);
+                                needs_clear = true;
+                            }
                             KeyCode::Left => {
                                 cfg.face = cfg.face.prev();
                                 needs_clear = true;
@@ -182,7 +533,8 @@ fn event_loop(out: &mut Stdout, cfg: &mut Config) -> Result<()> {
                                 needs_clear = true;
                             }
                             KeyCode::Tab => {
-                                let idx = Face::ALL.iter().position(|f| *f == cfg.face).unwrap_or(0);
+                                let idx =
+                                    Face::ALL.iter().position(|f| *f == cfg.face).unwrap_or(0);
                                 picker = Some(idx);
                                 needs_clear = true;
                             }
@@ -228,7 +580,9 @@ fn event_loop(out: &mut Stdout, cfg: &mut Config) -> Result<()> {
                 }
                 Event::Mouse(mouse_event) => {
                     if let Some(selected) = picker {
-                        if let event::MouseEventKind::Down(event::MouseButton::Left) = mouse_event.kind {
+                        if let event::MouseEventKind::Down(event::MouseButton::Left) =
+                            mouse_event.kind
+                        {
                             let (term_w, term_h) = terminal::size()?;
                             let n = Face::ALL.len();
                             let grid_rows = n.div_ceil(PICKER_COLS);
@@ -236,14 +590,16 @@ fn event_loop(out: &mut Stdout, cfg: &mut Config) -> Result<()> {
                             let gap_y: u16 = 0;
                             let label_h: u16 = 1;
 
-                            let box_w = ((term_w.saturating_sub(4) - gap_x * (PICKER_COLS as u16 - 1))
+                            let box_w = ((term_w.saturating_sub(4)
+                                - gap_x * (PICKER_COLS as u16 - 1))
                                 / PICKER_COLS as u16)
                                 .clamp(16, 46);
                             let box_h = ((term_h.saturating_sub(4)) / grid_rows as u16)
                                 .saturating_sub(label_h + gap_y)
                                 .clamp(6, 14);
 
-                            let total_w = PICKER_COLS as u16 * box_w + (PICKER_COLS as u16 - 1) * gap_x;
+                            let total_w =
+                                PICKER_COLS as u16 * box_w + (PICKER_COLS as u16 - 1) * gap_x;
                             let total_h = grid_rows as u16 * (box_h + label_h + gap_y);
                             let start_col = term_w.saturating_sub(total_w) / 2;
                             let start_row = term_h.saturating_sub(total_h + 1) / 2;
@@ -257,7 +613,11 @@ fn event_loop(out: &mut Stdout, cfg: &mut Config) -> Result<()> {
                                 let x0 = start_col + col * (box_w + gap_x);
                                 let y0 = start_row + row * (box_h + label_h + gap_y);
 
-                                if cx >= x0 && cx < x0 + box_w && cy >= y0 && cy < y0 + box_h + label_h {
+                                if cx >= x0
+                                    && cx < x0 + box_w
+                                    && cy >= y0
+                                    && cy < y0 + box_h + label_h
+                                {
                                     if selected == i {
                                         cfg.face = Face::ALL[i];
                                         picker = None;
@@ -294,7 +654,11 @@ fn current_scale(cfg: &Config) -> Result<u8> {
     if cfg.show_date {
         reserved += 2;
     }
-    let fit_len = if cfg.show_seconds { text.chars().count() } else { text.chars().count() + 3 };
+    let fit_len = if cfg.show_seconds {
+        text.chars().count()
+    } else {
+        text.chars().count() + 3
+    };
     let cap = crate::vector::fit_height(
         fit_len,
         w as usize,
@@ -327,10 +691,11 @@ fn render_face(face: Face, now: DateTime<Local>, cfg: &Config, w: usize, h: usiz
         Face::Ship => faces::ship::render(now, cfg, w, h),
         Face::Grid => faces::grid::render(now, cfg, w, h),
         Face::Warp => faces::warp::render(now, cfg, w, h),
+        Face::Snake => faces::snake::render(now, cfg, w, h),
     }
 }
 
-fn draw(out: &mut Stdout, cfg: &Config) -> Result<()> {
+fn draw(out: &mut Stdout, cfg: &Config, is_alarm_active: bool) -> Result<()> {
     let (term_w, term_h) = terminal::size()?;
     if term_w < 20 || term_h < 6 {
         queue!(out, Clear(ClearType::All), MoveTo(0, 0))?;
@@ -350,24 +715,43 @@ fn draw(out: &mut Stdout, cfg: &Config) -> Result<()> {
     let mut current_cfg = cfg.clone();
     let mut bg_color = Color::Reset;
 
-    if in_alarm_minute && now.second() % 2 == 0 {
+    let is_flashing = is_alarm_active || in_alarm_minute;
+
+    if is_flashing && now.second() % 2 == 0 {
         bg_color = Color::Red;
         current_cfg.color = "black".to_string();
         current_cfg.accent_color = "black".to_string();
     }
 
-    let lines = render_face(current_cfg.face, now, &current_cfg, term_w as usize, avail_h);
+    let lines = render_face(
+        current_cfg.face,
+        now,
+        &current_cfg,
+        term_w as usize,
+        avail_h,
+    );
     draw_block(out, term_w, avail_h as u16, &lines, bg_color)?;
 
-    // The row between the clock area and the status line is nobody's, so
-    // blank it too rather than leaving whatever was there last frame.
+    // Draw the next upcoming alarm or blank space in the row between the clock area and status.
+    let alarm_str = next_upcoming_alarm(cfg, now);
     for row in avail_h..term_h.saturating_sub(1) as usize {
-        queue!(
-            out,
-            MoveTo(0, row as u16),
-            SetBackgroundColor(bg_color),
-            Print(" ".repeat(term_w as usize))
-        )?;
+        queue!(out, MoveTo(0, row as u16), SetBackgroundColor(bg_color))?;
+        if let Some(ref text) = alarm_str {
+            let text_len = text.chars().count();
+            if text_len < term_w as usize {
+                let pad = (term_w as usize - text_len) / 2;
+                queue!(
+                    out,
+                    SetForegroundColor(Color::DarkGrey),
+                    Print(" ".repeat(pad)),
+                    Print(text),
+                    Print(" ".repeat(term_w as usize - pad - text_len)),
+                    ResetColor
+                )?;
+                continue;
+            }
+        }
+        queue!(out, Print(" ".repeat(term_w as usize)))?;
     }
 
     draw_status(out, term_w, term_h, bg_color)?;
@@ -390,7 +774,17 @@ fn draw_status(out: &mut Stdout, term_w: u16, term_h: u16, bg: Color) -> Result<
     }
     let pad = (term_w as usize).saturating_sub(text.chars().count()) / 2;
     let left_pad = " ".repeat(pad);
-    let right_pad = " ".repeat((term_w as usize).saturating_sub(pad + text.chars().count()));
+    let mut right_pad = " ".repeat((term_w as usize).saturating_sub(pad + text.chars().count()));
+
+    // Active spinner character at the bottom right corner forces
+    // GPU-accelerated terminals like Warp to redraw the frame instead of freezing.
+    let now = Local::now();
+    let spinners = ['|', '/', '-', '\\'];
+    let spinner_char = spinners[(now.timestamp_subsec_millis() / 250) as usize % 4];
+    if !right_pad.is_empty() {
+        right_pad.pop();
+        right_pad.push(spinner_char);
+    }
 
     queue!(
         out,
@@ -443,9 +837,18 @@ fn draw_block(out: &mut Stdout, area_w: u16, area_h: u16, lines: &[Line], bg: Co
             }
             let text: String = s.text.chars().take(room).collect();
             used += text.chars().count();
-            queue!(out, SetForegroundColor(s.color), SetBackgroundColor(bg), Print(&text))?;
+            queue!(
+                out,
+                SetForegroundColor(s.color),
+                SetBackgroundColor(bg),
+                Print(&text)
+            )?;
         }
-        queue!(out, SetBackgroundColor(bg), Print(" ".repeat(aw - left - used)))?;
+        queue!(
+            out,
+            SetBackgroundColor(bg),
+            Print(" ".repeat(aw - left - used))
+        )?;
     }
     queue!(out, ResetColor)?;
     Ok(())
@@ -576,7 +979,7 @@ fn draw_picker(out: &mut Stdout, cfg: &Config, selected: usize) -> Result<()> {
         )?;
     }
 
-    let hint = "\u{2190}\u{2192}\u{2191}\u{2193} move   enter select   esc cancel";
+    let hint = "\u{2190}\u{2192}\u{2191}\u{2193} move   enter select   esc/q cancel";
     let hint_len = hint.chars().count() as u16;
     queue!(
         out,
@@ -589,4 +992,687 @@ fn draw_picker(out: &mut Stdout, cfg: &Config, selected: usize) -> Result<()> {
         ResetColor
     )?;
     Ok(())
+}
+
+pub fn next_upcoming_alarm(cfg: &Config, now: DateTime<Local>) -> Option<String> {
+    let mut next_alarm: Option<(chrono::NaiveDateTime, &crate::config::Alarm)> = None;
+    let now_naive = now.naive_local();
+
+    for alarm in &cfg.alarms {
+        if !alarm.enabled {
+            continue;
+        }
+        let alarm_time = match alarm.get_time() {
+            Some(t) => t,
+            None => continue,
+        };
+        let start_date = match alarm.get_start_date() {
+            Some(d) => d,
+            None => continue,
+        };
+
+        for day_offset in 0..=15 {
+            let candidate_date = now.date_naive() + chrono::Duration::days(day_offset);
+            if candidate_date < start_date {
+                continue;
+            }
+
+            let matches_recurrence = match alarm.recurrence {
+                crate::config::Recurrence::Once => candidate_date == start_date,
+                crate::config::Recurrence::Daily => true,
+                crate::config::Recurrence::Weekly => {
+                    candidate_date.weekday() == alarm.get_day_of_week()
+                }
+                crate::config::Recurrence::BiWeekly => {
+                    let diff = (candidate_date - start_date).num_days();
+                    diff >= 0 && diff % 14 == 0
+                }
+                crate::config::Recurrence::Weekday => {
+                    let wd = candidate_date.weekday();
+                    wd != chrono::Weekday::Sat && wd != chrono::Weekday::Sun
+                }
+                crate::config::Recurrence::Weekend => {
+                    let wd = candidate_date.weekday();
+                    wd == chrono::Weekday::Sat || wd == chrono::Weekday::Sun
+                }
+            };
+
+            if matches_recurrence {
+                let scheduled_dt = candidate_date.and_time(alarm_time);
+                if scheduled_dt >= now_naive {
+                    match next_alarm {
+                        None => next_alarm = Some((scheduled_dt, alarm)),
+                        Some((best_dt, _)) if scheduled_dt < best_dt => {
+                            next_alarm = Some((scheduled_dt, alarm))
+                        }
+                        _ => {}
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    next_alarm.map(|(dt, alarm)| {
+        let day_prefix = dt.format("%a ").to_string(); // e.g. "Mon "
+        format!(
+            "Alarm: {}{} ({}) [{}]",
+            day_prefix,
+            alarm.time,
+            alarm.name,
+            alarm.recurrence.to_string()
+        )
+    })
+}
+
+fn has_detail_field(rec: &crate::config::Recurrence) -> bool {
+    matches!(
+        rec,
+        crate::config::Recurrence::Once
+            | crate::config::Recurrence::Weekly
+            | crate::config::Recurrence::BiWeekly
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlarmField {
+    Enabled,
+    Hour,
+    Minute,
+    Recurrence,
+    Detail,
+    WarningOffset,
+    Name,
+}
+
+pub fn active_fields(alarm: &crate::config::Alarm) -> Vec<AlarmField> {
+    let mut fields = vec![
+        AlarmField::Enabled,
+        AlarmField::Hour,
+        AlarmField::Minute,
+        AlarmField::Recurrence,
+    ];
+    if has_detail_field(&alarm.recurrence) {
+        fields.push(AlarmField::Detail);
+    }
+    fields.push(AlarmField::WarningOffset);
+    fields.push(AlarmField::Name);
+    fields
+}
+
+fn adjust_field(alarm: &mut crate::config::Alarm, field: AlarmField, delta: i32) {
+    use chrono::Timelike;
+    match field {
+        AlarmField::Enabled => {
+            alarm.enabled = !alarm.enabled;
+        }
+        AlarmField::Hour => {
+            if let Some(time) = alarm.get_time() {
+                let new_h = (time.hour() as i32 + delta).rem_euclid(24) as u32;
+                alarm.time = format!("{:02}:{:02}", new_h, time.minute());
+            }
+        }
+        AlarmField::Minute => {
+            if let Some(time) = alarm.get_time() {
+                let new_m = (time.minute() as i32 + delta).rem_euclid(60) as u32;
+                alarm.time = format!("{:02}:{:02}", time.hour(), new_m);
+            }
+        }
+        AlarmField::Recurrence => {
+            let current = alarm.recurrence;
+            let variants = [
+                crate::config::Recurrence::Once,
+                crate::config::Recurrence::Daily,
+                crate::config::Recurrence::Weekly,
+                crate::config::Recurrence::BiWeekly,
+                crate::config::Recurrence::Weekday,
+                crate::config::Recurrence::Weekend,
+            ];
+            let pos = variants.iter().position(|&v| v == current).unwrap_or(0);
+            let new_pos = (pos as i32 + delta).rem_euclid(variants.len() as i32) as usize;
+            alarm.recurrence = variants[new_pos];
+
+            if alarm.recurrence == crate::config::Recurrence::Weekly && alarm.day_of_week.is_none()
+            {
+                alarm.day_of_week = Some("Monday".to_string());
+            }
+        }
+        AlarmField::Detail => match alarm.recurrence {
+            crate::config::Recurrence::Weekly => {
+                let current_dow = alarm.get_day_of_week();
+                let days = [
+                    chrono::Weekday::Mon,
+                    chrono::Weekday::Tue,
+                    chrono::Weekday::Wed,
+                    chrono::Weekday::Thu,
+                    chrono::Weekday::Fri,
+                    chrono::Weekday::Sat,
+                    chrono::Weekday::Sun,
+                ];
+                let pos = days.iter().position(|&d| d == current_dow).unwrap_or(0);
+                let new_pos = (pos as i32 + delta).rem_euclid(7) as usize;
+                let next_dow = days[new_pos];
+                let dow_str = match next_dow {
+                    chrono::Weekday::Mon => "Monday",
+                    chrono::Weekday::Tue => "Tuesday",
+                    chrono::Weekday::Wed => "Wednesday",
+                    chrono::Weekday::Thu => "Thursday",
+                    chrono::Weekday::Fri => "Friday",
+                    chrono::Weekday::Sat => "Saturday",
+                    chrono::Weekday::Sun => "Sunday",
+                };
+                alarm.day_of_week = Some(dow_str.to_string());
+            }
+            crate::config::Recurrence::Once | crate::config::Recurrence::BiWeekly => {
+                if let Some(start) = alarm.get_start_date() {
+                    let new_date = start + chrono::Duration::days(delta as i64);
+                    alarm.start_date = new_date.format("%Y-%m-%d").to_string();
+                }
+            }
+            _ => {}
+        },
+        AlarmField::WarningOffset => {
+            alarm.trigger_offset_min =
+                (alarm.trigger_offset_min as i32 + delta).clamp(0, 60) as u32;
+        }
+        AlarmField::Name => {}
+    }
+}
+
+fn draw_alarm_manager(
+    out: &mut Stdout,
+    cfg: &Config,
+    selected_row: usize,
+    selected_col: usize,
+) -> Result<()> {
+    let (term_w, term_h) = terminal::size()?;
+    queue!(out, Clear(ClearType::All))?;
+
+    let accent = color::parse(&cfg.resolve_accent());
+
+    // Title
+    let title = "=== ALARM MANAGER ===";
+    let title_x = term_w.saturating_sub(title.chars().count() as u16) / 2;
+    queue!(
+        out,
+        MoveTo(title_x, 2),
+        SetForegroundColor(accent),
+        Print(title),
+        ResetColor
+    )?;
+
+    // List of alarms
+    let list_start_y = 4;
+    let mut current_y = list_start_y;
+
+    if cfg.alarms.is_empty() {
+        let empty_msg = "No alarms configured. Press 'a' to add one.";
+        let empty_x = term_w.saturating_sub(empty_msg.chars().count() as u16) / 2;
+        queue!(
+            out,
+            MoveTo(empty_x, current_y),
+            SetForegroundColor(Color::DarkGrey),
+            Print(empty_msg),
+            ResetColor
+        )?;
+    } else {
+        for (i, alarm) in cfg.alarms.iter().enumerate() {
+            if current_y as u16 >= term_h.saturating_sub(6) {
+                break; // Don't overflow the screen
+            }
+
+            let is_row_selected = i == selected_row;
+
+            let status_str = if alarm.enabled { " ON " } else { "OFF" };
+            let status_color = if alarm.enabled {
+                Color::Green
+            } else {
+                Color::Red
+            };
+
+            let hh = format!("{:02}", alarm.get_time().map_or(0, |t| t.hour()));
+            let mm = format!("{:02}", alarm.get_time().map_or(0, |t| t.minute()));
+
+            let rec_str = format!("{:<10}", alarm.recurrence.to_string());
+
+            let has_detail = has_detail_field(&alarm.recurrence);
+            let detail_str = if has_detail {
+                match alarm.recurrence {
+                    crate::config::Recurrence::Weekly => {
+                        format!("{:<12}", alarm.day_of_week.as_deref().unwrap_or("Monday"))
+                    }
+                    crate::config::Recurrence::Once | crate::config::Recurrence::BiWeekly => {
+                        format!("{:<12}", alarm.start_date)
+                    }
+                    _ => "".to_string(),
+                }
+            } else {
+                "".to_string()
+            };
+
+            let offset_str = if alarm.trigger_offset_min == 0 {
+                "At Event    ".to_string()
+            } else {
+                format!("{:>2}m before  ", alarm.trigger_offset_min)
+            };
+
+            let mut line_len = 3 + 6 + 2 + 5 + 2 + 10 + 2 + 12 + 2 + alarm.name.chars().count();
+            if has_detail {
+                line_len += 12 + 2;
+            }
+
+            let start_x = term_w.saturating_sub(line_len as u16) / 2;
+            queue!(out, MoveTo(start_x, current_y))?;
+
+            // 1. Prefix (Row indicator)
+            let prefix = if is_row_selected { ">  " } else { "   " };
+            queue!(
+                out,
+                SetForegroundColor(if is_row_selected {
+                    accent
+                } else {
+                    Color::DarkGrey
+                }),
+                Print(prefix),
+                ResetColor
+            )?;
+
+            let active_f = active_fields(alarm);
+            let current_field = active_f.get(selected_col).copied();
+
+            // 2. Col 0: Status Toggle
+            let highlight_0 = is_row_selected && current_field == Some(AlarmField::Enabled);
+            let status_text = format!("[{}]", status_str);
+            if highlight_0 {
+                queue!(
+                    out,
+                    SetBackgroundColor(status_color),
+                    SetForegroundColor(Color::Black),
+                    Print(&status_text),
+                    ResetColor
+                )?;
+            } else {
+                queue!(
+                    out,
+                    SetForegroundColor(status_color),
+                    Print(&status_text),
+                    ResetColor
+                )?;
+            }
+            queue!(out, Print("  "))?;
+
+            // 3. Col 1 & 2: Time (HH:MM)
+            let highlight_1 = is_row_selected && current_field == Some(AlarmField::Hour);
+            let highlight_2 = is_row_selected && current_field == Some(AlarmField::Minute);
+
+            if highlight_1 {
+                queue!(
+                    out,
+                    SetBackgroundColor(accent),
+                    SetForegroundColor(Color::Black),
+                    Print(&hh),
+                    ResetColor
+                )?;
+            } else {
+                queue!(
+                    out,
+                    SetForegroundColor(if is_row_selected {
+                        Color::White
+                    } else {
+                        Color::Reset
+                    }),
+                    Print(&hh),
+                    ResetColor
+                )?;
+            }
+
+            queue!(
+                out,
+                SetForegroundColor(if is_row_selected {
+                    accent
+                } else {
+                    Color::DarkGrey
+                }),
+                Print(":"),
+                ResetColor
+            )?;
+
+            if highlight_2 {
+                queue!(
+                    out,
+                    SetBackgroundColor(accent),
+                    SetForegroundColor(Color::Black),
+                    Print(&mm),
+                    ResetColor
+                )?;
+            } else {
+                queue!(
+                    out,
+                    SetForegroundColor(if is_row_selected {
+                        Color::White
+                    } else {
+                        Color::Reset
+                    }),
+                    Print(&mm),
+                    ResetColor
+                )?;
+            }
+            queue!(out, Print("  "))?;
+
+            // 4. Col 3: Recurrence
+            let highlight_3 = is_row_selected && current_field == Some(AlarmField::Recurrence);
+            if highlight_3 {
+                queue!(
+                    out,
+                    SetBackgroundColor(accent),
+                    SetForegroundColor(Color::Black),
+                    Print(&rec_str),
+                    ResetColor
+                )?;
+            } else {
+                queue!(
+                    out,
+                    SetForegroundColor(if is_row_selected {
+                        Color::White
+                    } else {
+                        Color::Reset
+                    }),
+                    Print(&rec_str),
+                    ResetColor
+                )?;
+            }
+
+            // 5. Col 4: Detail (Date or Day of Week)
+            if has_detail {
+                queue!(out, Print("  "))?;
+                let highlight_4 = is_row_selected && current_field == Some(AlarmField::Detail);
+                if highlight_4 {
+                    queue!(
+                        out,
+                        SetBackgroundColor(accent),
+                        SetForegroundColor(Color::Black),
+                        Print(&detail_str),
+                        ResetColor
+                    )?;
+                } else {
+                    queue!(
+                        out,
+                        SetForegroundColor(if is_row_selected {
+                            Color::White
+                        } else {
+                            Color::Reset
+                        }),
+                        Print(&detail_str),
+                        ResetColor
+                    )?;
+                }
+            }
+
+            // 6. Col 4/5: Warning Offset
+            queue!(out, Print("  "))?;
+            let highlight_offset =
+                is_row_selected && current_field == Some(AlarmField::WarningOffset);
+            if highlight_offset {
+                queue!(
+                    out,
+                    SetBackgroundColor(accent),
+                    SetForegroundColor(Color::Black),
+                    Print(&offset_str),
+                    ResetColor
+                )?;
+            } else {
+                queue!(
+                    out,
+                    SetForegroundColor(if is_row_selected {
+                        Color::White
+                    } else {
+                        Color::Reset
+                    }),
+                    Print(&offset_str),
+                    ResetColor
+                )?;
+            }
+
+            // 7. Name
+            queue!(out, Print("  "))?;
+            let highlight_name = is_row_selected && current_field == Some(AlarmField::Name);
+            if highlight_name {
+                queue!(
+                    out,
+                    SetBackgroundColor(accent),
+                    SetForegroundColor(Color::Black),
+                    Print(&alarm.name),
+                    ResetColor
+                )?;
+            } else {
+                queue!(
+                    out,
+                    SetForegroundColor(if is_row_selected {
+                        accent
+                    } else {
+                        Color::DarkGrey
+                    }),
+                    Print(&alarm.name),
+                    ResetColor
+                )?;
+            }
+
+            current_y += 1;
+        }
+    }
+
+    // Help box at the bottom
+    let help_box_y = term_h.saturating_sub(6);
+    let separator = "-".repeat(term_w.min(50) as usize);
+    let sep_x = term_w.saturating_sub(separator.chars().count() as u16) / 2;
+    queue!(
+        out,
+        MoveTo(sep_x, help_box_y),
+        SetForegroundColor(Color::DarkGrey),
+        Print(&separator),
+        ResetColor
+    )?;
+
+    let help_lines = &[
+        "\u{2191}\u{2193} Row Selection   \u{2190}\u{2192} Move Highlighted Field",
+        "+/- Adjust Focused Value   Space Toggle Status   a Add   d Delete",
+        "esc/q Back to Clock",
+    ];
+
+    for (offset, line) in help_lines.iter().enumerate() {
+        let x = term_w.saturating_sub(line.chars().count() as u16) / 2;
+        queue!(
+            out,
+            MoveTo(x, help_box_y + 1 + offset as u16),
+            SetForegroundColor(Color::DarkGrey),
+            Print(line),
+            ResetColor
+        )?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Alarm, Recurrence};
+    use chrono::{NaiveDate, TimeZone};
+
+    #[test]
+    fn test_check_active_alarm_once() {
+        let mut cfg = Config::default();
+        // Set up a Once alarm
+        let alarm = Alarm {
+            name: "Once Alarm".to_string(),
+            time: "08:00".to_string(),
+            recurrence: Recurrence::Once,
+            start_date: "2026-08-17".to_string(),
+            day_of_week: None,
+            trigger_offset_min: 1,
+            enabled: true,
+        };
+        cfg.alarms.push(alarm);
+
+        // 1. Right on the triggering time (1 min before scheduled)
+        // 2026-08-17 07:59:00 Local
+        let now = Local.with_ymd_and_hms(2026, 8, 17, 7, 59, 0).unwrap();
+        let active = check_active_alarm(&cfg, now, &[]);
+        assert!(active.is_some());
+        let active = active.unwrap();
+        assert_eq!(active.index, 0);
+        assert_eq!(
+            active.candidate_date,
+            NaiveDate::from_ymd_opt(2026, 8, 17).unwrap()
+        );
+
+        // 2. Already dismissed
+        let active_dismissed = check_active_alarm(
+            &cfg,
+            now,
+            &[(0, NaiveDate::from_ymd_opt(2026, 8, 17).unwrap())],
+        );
+        assert!(active_dismissed.is_none());
+
+        // 3. Before triggering window
+        let now_before = Local.with_ymd_and_hms(2026, 8, 17, 7, 58, 59).unwrap();
+        assert!(check_active_alarm(&cfg, now_before, &[]).is_none());
+
+        // 4. After triggering window (5 min after scheduled time)
+        let now_after = Local.with_ymd_and_hms(2026, 8, 17, 8, 5, 0).unwrap();
+        assert!(check_active_alarm(&cfg, now_after, &[]).is_none());
+    }
+
+    #[test]
+    fn test_check_active_alarm_daily() {
+        let mut cfg = Config::default();
+        let alarm = Alarm {
+            name: "Daily Alarm".to_string(),
+            time: "12:30".to_string(),
+            recurrence: Recurrence::Daily,
+            start_date: "2026-08-15".to_string(),
+            day_of_week: None,
+            trigger_offset_min: 1,
+            enabled: true,
+        };
+        cfg.alarms.push(alarm);
+
+        // 1. On start_date, triggering window: 12:29:00
+        let now1 = Local.with_ymd_and_hms(2026, 8, 15, 12, 29, 0).unwrap();
+        assert!(check_active_alarm(&cfg, now1, &[]).is_some());
+
+        // 2. On a subsequent day, triggering window
+        let now2 = Local.with_ymd_and_hms(2026, 8, 20, 12, 29, 30).unwrap();
+        assert!(check_active_alarm(&cfg, now2, &[]).is_some());
+
+        // 3. On a day before start_date
+        let now_before = Local.with_ymd_and_hms(2026, 8, 14, 12, 29, 0).unwrap();
+        assert!(check_active_alarm(&cfg, now_before, &[]).is_none());
+    }
+
+    #[test]
+    fn test_check_active_alarm_weekday_weekend() {
+        let mut cfg = Config::default();
+        let wd_alarm = Alarm {
+            name: "Weekday".to_string(),
+            time: "09:00".to_string(),
+            recurrence: Recurrence::Weekday,
+            start_date: "2026-08-17".to_string(), // Mon
+            day_of_week: None,
+            trigger_offset_min: 1,
+            enabled: true,
+        };
+        let we_alarm = Alarm {
+            name: "Weekend".to_string(),
+            time: "10:00".to_string(),
+            recurrence: Recurrence::Weekend,
+            start_date: "2026-08-17".to_string(),
+            day_of_week: None,
+            trigger_offset_min: 1,
+            enabled: true,
+        };
+        cfg.alarms.push(wd_alarm);
+        cfg.alarms.push(we_alarm);
+
+        // 2026-08-17 is Monday. Weekday alarm should trigger.
+        let mon = Local.with_ymd_and_hms(2026, 8, 17, 8, 59, 0).unwrap();
+        let act = check_active_alarm(&cfg, mon, &[]);
+        assert!(act.is_some());
+        assert_eq!(act.unwrap().index, 0);
+
+        // Monday 10:00 weekend alarm should NOT trigger
+        let mon_we = Local.with_ymd_and_hms(2026, 8, 17, 9, 59, 0).unwrap();
+        assert!(check_active_alarm(&cfg, mon_we, &[]).is_none());
+
+        // 2026-08-22 is Saturday. Weekend alarm should trigger.
+        let sat = Local.with_ymd_and_hms(2026, 8, 22, 9, 59, 0).unwrap();
+        let act = check_active_alarm(&cfg, sat, &[]);
+        assert!(act.is_some());
+        assert_eq!(act.unwrap().index, 1);
+    }
+
+    #[test]
+    fn test_check_active_alarm_weekly_custom_day() {
+        let mut cfg = Config::default();
+        let weekly_alarm = Alarm {
+            name: "Weekly Mon".to_string(),
+            time: "09:00".to_string(),
+            recurrence: Recurrence::Weekly,
+            start_date: "2026-08-17".to_string(),
+            day_of_week: Some("Monday".to_string()),
+            trigger_offset_min: 1,
+            enabled: true,
+        };
+        cfg.alarms.push(weekly_alarm);
+
+        // Monday trigger -> Should succeed
+        let mon = Local.with_ymd_and_hms(2026, 8, 17, 8, 59, 0).unwrap();
+        assert!(check_active_alarm(&cfg, mon, &[]).is_some());
+
+        // Tuesday trigger -> Should fail
+        let tue = Local.with_ymd_and_hms(2026, 8, 18, 8, 59, 0).unwrap();
+        assert!(check_active_alarm(&cfg, tue, &[]).is_none());
+    }
+
+    #[test]
+    fn test_duration_until_next_trigger() {
+        let mut cfg = Config::default();
+        let alarm = Alarm {
+            name: "Once Alarm".to_string(),
+            time: "08:00".to_string(),
+            recurrence: Recurrence::Once,
+            start_date: "2026-08-17".to_string(),
+            day_of_week: None,
+            trigger_offset_min: 1,
+            enabled: true,
+        };
+        cfg.alarms.push(alarm);
+
+        // 10 minutes before trigger (which is at 07:59:00)
+        let now = Local.with_ymd_and_hms(2026, 8, 17, 7, 49, 0).unwrap();
+        let dur = duration_until_next_trigger(&cfg, now);
+        assert!(dur.is_some());
+        assert_eq!(dur.unwrap(), Duration::from_secs(600));
+    }
+
+    #[test]
+    fn test_next_upcoming_alarm_formatting() {
+        let mut cfg = Config::default();
+        let alarm = Alarm {
+            name: "My Alarm".to_string(),
+            time: "15:00".to_string(),
+            recurrence: Recurrence::Weekly,
+            start_date: "2026-08-17".to_string(),
+            day_of_week: Some("Tuesday".to_string()),
+            trigger_offset_min: 3,
+            enabled: true,
+        };
+        cfg.alarms.push(alarm);
+
+        // Monday 15:00. The next trigger should be Tuesday 15:00.
+        let now = Local.with_ymd_and_hms(2026, 8, 17, 15, 0, 0).unwrap();
+        let summary = next_upcoming_alarm(&cfg, now);
+        assert!(summary.is_some());
+        assert_eq!(summary.unwrap(), "Alarm: Tue 15:00 (My Alarm) [weekly]");
+    }
 }

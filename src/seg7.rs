@@ -48,8 +48,18 @@ pub fn width_of(text: &str, u: usize) -> usize {
 }
 
 /// The largest unit whose rendering of `text` fits the given area.
-pub fn fit_unit(text: &str, show_seconds: bool, avail_w: usize, avail_h: usize, max_u: usize) -> usize {
-    let fit_text = if show_seconds || text.chars().count() > 5 { text.to_string() } else { format!("{}:00", text) };
+pub fn fit_unit(
+    text: &str,
+    show_seconds: bool,
+    avail_w: usize,
+    avail_h: usize,
+    max_u: usize,
+) -> usize {
+    let fit_text = if show_seconds || text.chars().count() > 5 {
+        text.to_string()
+    } else {
+        format!("{}:00", text)
+    };
     (1..=max_u.max(1))
         .rev()
         .find(|&u| width_of(&fit_text, u) <= avail_w && digit_h(u) <= avail_h)
@@ -113,13 +123,13 @@ fn draw_glyph(
     // Horizontal bars span the full width; vertical bars the full half-height.
     // They meet flush, so corners are solid.
     let bars: [(bool, usize, usize, usize, usize); 7] = [
-        (s[0], 0, th, 0, w),                    // a
-        (s[1], 0, 4 * u, w - tv, w),            // b
-        (s[2], 3 * u, 7 * u, w - tv, w),        // c
-        (s[3], 6 * u, 7 * u, 0, w),             // d
-        (s[4], 3 * u, 7 * u, 0, tv),            // e
-        (s[5], 0, 4 * u, 0, tv),                // f
-        (s[6], 3 * u, 4 * u, 0, w),             // g
+        (s[0], 0, th, 0, w),             // a
+        (s[1], 0, 4 * u, w - tv, w),     // b
+        (s[2], 3 * u, 7 * u, w - tv, w), // c
+        (s[3], 6 * u, 7 * u, 0, w),      // d
+        (s[4], 3 * u, 7 * u, 0, tv),     // e
+        (s[5], 0, 4 * u, 0, tv),         // f
+        (s[6], 3 * u, 4 * u, 0, w),      // g
     ];
     for (on, r0, r1, c0, c1) in bars {
         let is_ghost = !on && ghost_segments;
@@ -206,7 +216,10 @@ pub fn render(
                 let (ch, c) = if is_lit {
                     ('\u{2588}', color_at(cx as f64 / denom))
                 } else if is_ghost {
-                    ('\u{2588}', crate::color::dim(color_at(cx as f64 / denom), 0.15))
+                    (
+                        '\u{2588}',
+                        crate::color::dim(color_at(cx as f64 / denom), 0.15),
+                    )
                 } else {
                     (' ', crossterm::style::Color::Reset)
                 };
@@ -256,7 +269,9 @@ mod tests {
         };
 
         // Validate ALL digits ('0'..='9', 'A', 'P', 'M')
-        for &digit_char in &['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'P', 'M'] {
+        for &digit_char in &[
+            '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'P', 'M',
+        ] {
             let grid = get_grid(digit_char);
             let s = segments(digit_char).unwrap();
 
@@ -287,7 +302,11 @@ mod tests {
             if s[4] {
                 for r in (3 * u)..(7 * u) {
                     let is_filled = (0..tv).any(|col| grid[r * w + col]);
-                    assert!(is_filled, "Digit '{}' has a gap or discontinuity in lower-left segment 'e' at row {}", digit_char, r);
+                    assert!(
+                        is_filled,
+                        "Digit '{}' has a gap or discontinuity in lower-left segment 'e' at row {}",
+                        digit_char, r
+                    );
                 }
             }
 
@@ -295,10 +314,13 @@ mod tests {
             if s[5] {
                 for r in 0..(4 * u) {
                     let is_filled = (0..tv).any(|col| grid[r * w + col]);
-                    assert!(is_filled, "Digit '{}' has a gap or discontinuity in upper-left segment 'f' at row {}", digit_char, r);
+                    assert!(
+                        is_filled,
+                        "Digit '{}' has a gap or discontinuity in upper-left segment 'f' at row {}",
+                        digit_char, r
+                    );
                 }
             }
         }
     }
 }
-

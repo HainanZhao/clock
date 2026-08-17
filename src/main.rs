@@ -107,6 +107,40 @@ enum Command {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// Manage alarms.
+    Alarm {
+        #[command(subcommand)]
+        action: AlarmAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum AlarmAction {
+    /// List all alarms.
+    List,
+    /// Add a new alarm.
+    Add {
+        /// Alarm time in "HH:MM" format (24-hour).
+        #[arg(long)]
+        time: String,
+        /// Optional name or label for the alarm.
+        #[arg(long, default_value = "Alarm")]
+        name: String,
+        /// Recurrence: once, daily, weekly, bi-weekly, weekday, weekend.
+        #[arg(long, value_enum, default_value = "once")]
+        recurrence: config::Recurrence,
+        /// Optional start date in "YYYY-MM-DD" format (defaults to today).
+        #[arg(long)]
+        start_date: Option<String>,
+    },
+    /// Remove an alarm by its index.
+    Remove { index: usize },
+    /// Clear all alarms.
+    Clear,
+    /// Enable an alarm by its index.
+    Enable { index: usize },
+    /// Disable an alarm by its index.
+    Disable { index: usize },
 }
 
 #[derive(Subcommand)]
@@ -133,7 +167,113 @@ fn main() -> Result<()> {
             app::run(cfg)
         }
         Some(Command::Config { action }) => run_config(action, base),
+        Some(Command::Alarm { action }) => run_alarm(action, base),
     }
+}
+
+fn run_alarm(action: AlarmAction, mut cfg: Config) -> Result<()> {
+    match action {
+        AlarmAction::List => {
+            if cfg.alarms.is_empty() {
+                println!("No alarms configured.");
+            } else {
+                println!(
+                    "{:<5} {:<15} {:<10} {:<12} {:<12} {:<8}",
+                    "ID", "Name", "Time", "Recurrence", "Start Date", "Status"
+                );
+                println!("{}", "-".repeat(65));
+                for (i, alarm) in cfg.alarms.iter().enumerate() {
+                    let status = if alarm.enabled { "Enabled" } else { "Disabled" };
+                    println!(
+                        "{:<5} {:<15} {:<10} {:<12} {:<12} {:<8}",
+                        i,
+                        alarm.name,
+                        alarm.time,
+                        alarm.recurrence.to_string(),
+                        alarm.start_date,
+                        status
+                    );
+                }
+            }
+        }
+        AlarmAction::Add {
+            time,
+            name,
+            recurrence,
+            start_date,
+        } => {
+            if time.len() != 5 || !time.contains(':') {
+                bail!("Time must be in \"HH:MM\" 24-hour format.");
+            }
+            let parts: Vec<&str> = time.split(':').collect();
+            if parts.len() != 2 {
+                bail!("Time must be in \"HH:MM\" format.");
+            }
+            let h: u32 = parts[0]
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid hour"))?;
+            let m: u32 = parts[1]
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid minute"))?;
+            if h >= 24 || m >= 60 {
+                bail!("Hour must be 0-23 and minute 0-59.");
+            }
+
+            let s_date = match start_date {
+                Some(d) => {
+                    if chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d").is_err() {
+                        bail!("Start date must be in \"YYYY-MM-DD\" format.");
+                    }
+                    d
+                }
+                None => chrono::Local::now().format("%Y-%m-%d").to_string(),
+            };
+
+            let alarm = config::Alarm {
+                name,
+                time,
+                recurrence,
+                start_date: s_date,
+                day_of_week: None,
+                trigger_offset_min: 3,
+                enabled: true,
+            };
+
+            cfg.alarms.push(alarm);
+            cfg.save()?;
+            println!("Alarm added successfully.");
+        }
+        AlarmAction::Remove { index } => {
+            if index >= cfg.alarms.len() {
+                bail!("Invalid alarm index: {}.", index);
+            }
+            cfg.alarms.remove(index);
+            cfg.save()?;
+            println!("Alarm removed.");
+        }
+        AlarmAction::Clear => {
+            cfg.alarms.clear();
+            cfg.save()?;
+            println!("All alarms cleared.");
+        }
+        AlarmAction::Enable { index } => {
+            if index >= cfg.alarms.len() {
+                bail!("Invalid alarm index: {}.", index);
+            }
+            cfg.alarms[index].enabled = true;
+            cfg.save()?;
+            println!("Alarm {} enabled.", index);
+        }
+        AlarmAction::Disable { index } => {
+            if index >= cfg.alarms.len() {
+                bail!("Invalid alarm index: {}.", index);
+            }
+            cfg.alarms[index].enabled = false;
+            cfg.save()?;
+            println!("Alarm {} disabled.", index);
+        }
+    }
+    Ok(())
 }
 
 fn run_config(action: ConfigAction, mut cfg: Config) -> Result<()> {
@@ -191,9 +331,10 @@ fn set_field(cfg: &mut Config, key: &str, value: &str) -> Result<()> {
                 "ship" => Face::Ship,
                 "grid" => Face::Grid,
                 "warp" => Face::Warp,
+                "snake" => Face::Snake,
                 other => bail!(
                     "unknown face '{other}' (expected one of: digital, analog, binary, word, \
-                     matrix, flip, waves, rings, roman, lcd, hourglass, blocks, cuckoo, radar, ship, grid, warp)"
+                     matrix, flip, waves, rings, roman, lcd, hourglass, blocks, cuckoo, radar, ship, grid, warp, snake)"
                 ),
             }
         }

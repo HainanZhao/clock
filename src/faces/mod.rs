@@ -12,6 +12,7 @@ pub mod radar;
 pub mod rings;
 pub mod roman;
 pub mod ship;
+pub mod snake;
 pub mod warp;
 pub mod waves;
 pub mod word;

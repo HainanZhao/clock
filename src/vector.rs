@@ -55,7 +55,6 @@ enum Prim {
 
 use Prim::{Arc, Dot, Line};
 
-
 /// Centre line and bowl radii shared by most glyphs.
 const CX: f64 = GLYPH_W / 2.0;
 const RX: f64 = GLYPH_W / 2.0 - STROKE_W / 2.0;
@@ -171,7 +170,12 @@ fn glyph(c: char) -> Vec<Prim> {
         'A' => vec![
             Line(TOP, BOT, CX, TOP),
             Line(CX, TOP, GLYPH_W - TOP, BOT),
-            Line(TOP + RX * 0.32, BOT - ry * 0.5, GLYPH_W - TOP - RX * 0.32, BOT - ry * 0.5),
+            Line(
+                TOP + RX * 0.32,
+                BOT - ry * 0.5,
+                GLYPH_W - TOP - RX * 0.32,
+                BOT - ry * 0.5,
+            ),
         ],
         'B' => vec![
             Line(TOP, TOP, TOP, BOT),
@@ -326,10 +330,7 @@ fn glyph(c: char) -> Vec<Prim> {
                 a1: 160.0,
             },
         ],
-        'T' => vec![
-            Line(TOP, TOP, GLYPH_W - TOP, TOP),
-            Line(CX, TOP, CX, BOT),
-        ],
+        'T' => vec![Line(TOP, TOP, GLYPH_W - TOP, TOP), Line(CX, TOP, CX, BOT)],
         'U' => vec![
             Line(TOP, TOP, TOP, BOT - ry * 0.45),
             Line(GLYPH_W - TOP, TOP, GLYPH_W - TOP, BOT - ry * 0.45),
@@ -342,10 +343,7 @@ fn glyph(c: char) -> Vec<Prim> {
                 a1: 180.0,
             },
         ],
-        'V' => vec![
-            Line(TOP, TOP, CX, BOT),
-            Line(CX, BOT, GLYPH_W - TOP, TOP),
-        ],
+        'V' => vec![Line(TOP, TOP, CX, BOT), Line(CX, BOT, GLYPH_W - TOP, TOP)],
         'W' => vec![
             Line(TOP, TOP, TOP + RX * 0.42, BOT),
             Line(TOP + RX * 0.42, BOT, CX, 0.45),
@@ -539,7 +537,8 @@ pub fn render(
                 }
             };
             let (iy, ix) = (row * 2, col * 2);
-            let key = at(iy, ix) << 3 | at(iy, ix + 1) << 2 | at(iy + 1, ix) << 1 | at(iy + 1, ix + 1);
+            let key =
+                at(iy, ix) << 3 | at(iy, ix + 1) << 2 | at(iy + 1, ix) << 1 | at(iy + 1, ix + 1);
             let ch = QUADRANTS[key];
             let c = color_at(col as f64 / denom);
 

@@ -13,9 +13,7 @@ const DAY_SECS: usize = 24 * 60 * 60;
 
 /// Round intervals a block may represent, finest first. All of them divide an
 /// hour, so hour boundaries always land at a block boundary.
-const LADDER: [usize; 15] = [
-    1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60, 120, 300, 600,
-];
+const LADDER: [usize; 15] = [1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60, 120, 300, 600];
 
 /// Picks the finest interval whose grid fits, and reports the grid size.
 /// Falls back to the coarsest rung when even that overflows.
@@ -43,7 +41,11 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     let accent = color::parse(&cfg.accent_color);
 
     let mut extra: Vec<Line> = Vec::new();
-    let fmt = if cfg.hour12 { "%I:%M:%S %p" } else { "%H:%M:%S" };
+    let fmt = if cfg.hour12 {
+        "%I:%M:%S %p"
+    } else {
+        "%H:%M:%S"
+    };
     extra.push(render::blank());
 
     // Leave a margin so the grid doesn't run into the terminal edges.

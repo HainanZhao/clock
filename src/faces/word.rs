@@ -1,10 +1,10 @@
 //! "TEN PAST FOUR" word clock, rounded to the nearest 5 minutes and drawn in
 //! big block letters.
 
-use crate::vector;
 use crate::color;
 use crate::config::{Config, MAX_CAP_PX};
 use crate::render::{self, Line};
+use crate::vector;
 use chrono::{DateTime, Local, Timelike};
 
 const HOURS: [&str; 12] = [
@@ -59,12 +59,7 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     let usable_h = avail_h.saturating_sub(reserved);
     // Each word is one block-font line plus a blank row between words.
     let per_word_h = usable_h.saturating_sub(words.len() - 1) / words.len().max(1);
-    let h = cfg.resolve_height(vector::fit_height(
-        longest,
-        avail_w,
-        per_word_h,
-        MAX_CAP_PX,
-    ));
+    let h = cfg.resolve_height(vector::fit_height(longest, avail_w, per_word_h, MAX_CAP_PX));
 
     let mut lines: Vec<Line> = Vec::new();
     for (i, word) in words.iter().enumerate() {
@@ -82,7 +77,11 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
 
     if cfg.show_seconds {
         lines.push(render::blank());
-        let fmt = if cfg.hour12 { "%I:%M:%S %p" } else { "%H:%M:%S" };
+        let fmt = if cfg.hour12 {
+            "%I:%M:%S %p"
+        } else {
+            "%H:%M:%S"
+        };
         lines.push(render::line(
             now.format(fmt).to_string(),
             color::dim(primary, 0.8),

@@ -91,9 +91,7 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
 
             let mut picked: Option<(char, Color)> = None;
             for (idx, (_, _, base)) in specs.iter().enumerate() {
-                let at = |v: &Vec<String>| -> char {
-                    v[r_idx].chars().nth(i).unwrap_or(' ')
-                };
+                let at = |v: &Vec<String>| -> char { v[r_idx].chars().nth(i).unwrap_or(' ') };
                 let a = at(&arc_canvases[idx]);
                 if a != ' ' {
                     picked = Some((a, *base));

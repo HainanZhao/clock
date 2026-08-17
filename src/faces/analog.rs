@@ -21,7 +21,11 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     let accent = color::parse(&cfg.accent_color);
 
     let mut extra: Vec<Line> = Vec::new();
-    let time_fmt = if cfg.hour12 { "%I:%M:%S %p" } else { "%H:%M:%S" };
+    let time_fmt = if cfg.hour12 {
+        "%I:%M:%S %p"
+    } else {
+        "%H:%M:%S"
+    };
     if cfg.show_seconds {
         extra.push(render::blank());
         extra.push(render::line(now.format(time_fmt).to_string(), accent));

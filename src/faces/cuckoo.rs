@@ -24,9 +24,24 @@ fn disk(canvas: &mut Canvas, cx: f64, cy: f64, r: f64) {
 fn pinecone(canvas: &mut Canvas, cx: f64, cy: f64, r_dial: f64) {
     // Draw a textured cast-iron pinecone weight using horizontal bands
     canvas.line(cx - r_dial * 0.12, cy, cx + r_dial * 0.12, cy);
-    canvas.line(cx - r_dial * 0.16, cy + r_dial * 0.18, cx + r_dial * 0.16, cy + r_dial * 0.18);
-    canvas.line(cx - r_dial * 0.12, cy + r_dial * 0.36, cx + r_dial * 0.12, cy + r_dial * 0.36);
-    canvas.line(cx - r_dial * 0.08, cy + r_dial * 0.54, cx + r_dial * 0.08, cy + r_dial * 0.54);
+    canvas.line(
+        cx - r_dial * 0.16,
+        cy + r_dial * 0.18,
+        cx + r_dial * 0.16,
+        cy + r_dial * 0.18,
+    );
+    canvas.line(
+        cx - r_dial * 0.12,
+        cy + r_dial * 0.36,
+        cx + r_dial * 0.12,
+        cy + r_dial * 0.36,
+    );
+    canvas.line(
+        cx - r_dial * 0.08,
+        cy + r_dial * 0.54,
+        cx + r_dial * 0.08,
+        cy + r_dial * 0.54,
+    );
     canvas.set(cx, cy + r_dial * 0.72);
 }
 
@@ -34,10 +49,25 @@ fn pine_tree(canvas: &mut Canvas, cx: f64, base_y: f64, r_dial: f64) {
     // Draw a small pine tree silhouette
     let h_tree = r_dial * 0.45;
     canvas.line(cx, base_y, cx, base_y - h_tree); // trunk
-    // Layers of branches
-    canvas.line(cx - r_dial * 0.20, base_y - h_tree * 0.25, cx + r_dial * 0.20, base_y - h_tree * 0.25);
-    canvas.line(cx - r_dial * 0.15, base_y - h_tree * 0.55, cx + r_dial * 0.15, base_y - h_tree * 0.55);
-    canvas.line(cx - r_dial * 0.08, base_y - h_tree * 0.85, cx + r_dial * 0.08, base_y - h_tree * 0.85);
+                                                  // Layers of branches
+    canvas.line(
+        cx - r_dial * 0.20,
+        base_y - h_tree * 0.25,
+        cx + r_dial * 0.20,
+        base_y - h_tree * 0.25,
+    );
+    canvas.line(
+        cx - r_dial * 0.15,
+        base_y - h_tree * 0.55,
+        cx + r_dial * 0.15,
+        base_y - h_tree * 0.55,
+    );
+    canvas.line(
+        cx - r_dial * 0.08,
+        base_y - h_tree * 0.85,
+        cx + r_dial * 0.08,
+        base_y - h_tree * 0.85,
+    );
 }
 
 fn draw_window(canvas: &mut Canvas, cx: f64, cy: f64, w_size: f64) {
@@ -106,7 +136,7 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     house.line(chim_x - 1.5, chim_y, chim_x - 1.5, chim_y - 4.5);
     house.line(chim_x + 1.5, chim_y, chim_x + 1.5, chim_y - 4.5);
     house.line(chim_x - 1.5, chim_y - 4.5, chim_x + 1.5, chim_y - 4.5);
-    
+
     // Smoke puffs
     house.set(chim_x, chim_y - 6.5);
     house.set(chim_x + 1.5, chim_y - 8.5);
@@ -123,7 +153,12 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     let door_cx = cx;
     let door_cy = cy - r_dial * 1.35;
     house.circle(door_cx, door_cy, r_dial * 0.25);
-    house.line(door_cx - r_dial * 0.25, door_cy, door_cx + r_dial * 0.25, door_cy);
+    house.line(
+        door_cx - r_dial * 0.25,
+        door_cy,
+        door_cx + r_dial * 0.25,
+        door_cy,
+    );
 
     // If it's near the top of the hour or seconds are even, show a cuckoo bird popping out!
     if now.minute() == 0 || now.second() % 2 == 0 {
@@ -136,7 +171,11 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     // 2. Draw the ticking swinging Pendulum
     let base_y = floor_y;
     // Pendulum swings left and right second-by-second
-    let swing_offset = if now.second() % 2 == 0 { -r_dial * 0.40 } else { r_dial * 0.40 };
+    let swing_offset = if now.second() % 2 == 0 {
+        -r_dial * 0.40
+    } else {
+        r_dial * 0.40
+    };
     let pend_rod_len = r_dial * 0.85;
     let pend_weight_y = base_y + pend_rod_len;
     let pend_weight_x = cx + swing_offset;
@@ -149,7 +188,7 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     // Realistic touch: draw them at different winding heights!
     let chain_l_len = r_dial * 0.70;
     let chain_r_len = r_dial * 0.95;
-    
+
     // Left chain and weight
     for r_offset in 0..=(chain_l_len as usize) {
         if r_offset % 2 == 0 {
@@ -170,7 +209,11 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     dial.circle(cx, cy, r_dial);
     for h_idx in 0..12 {
         let theta = (h_idx as f64) / 12.0 * TAU - PI / 2.0;
-        let inner = if h_idx % 3 == 0 { r_dial * 0.82 } else { r_dial * 0.90 };
+        let inner = if h_idx % 3 == 0 {
+            r_dial * 0.82
+        } else {
+            r_dial * 0.90
+        };
         dial.line(
             cx + inner * theta.cos(),
             cy + inner * theta.sin(),

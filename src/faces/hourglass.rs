@@ -50,7 +50,11 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     let sand_c = color::hue(color::SECOND_HUE);
 
     let mut extra: Vec<Line> = Vec::new();
-    let fmt = if cfg.hour12 { "%I:%M:%S %p" } else { "%H:%M:%S" };
+    let fmt = if cfg.hour12 {
+        "%I:%M:%S %p"
+    } else {
+        "%H:%M:%S"
+    };
     extra.push(render::blank());
     extra.push(render::line(now.format(fmt).to_string(), accent));
     if cfg.show_date {

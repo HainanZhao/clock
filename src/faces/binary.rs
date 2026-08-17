@@ -105,7 +105,8 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
                     if sub_row == dot_h / 2 {
                         let pad = dot_w / 2;
                         let pad_after = dot_w - pad - 1;
-                        let cell_text = format!("{}{}{}", " ".repeat(pad), '\u{00b7}', " ".repeat(pad_after));
+                        let cell_text =
+                            format!("{}{}{}", " ".repeat(pad), '\u{00b7}', " ".repeat(pad_after));
                         l.push(span(cell_text, c));
                     } else {
                         l.push(span(" ".repeat(dot_w), c));

@@ -123,7 +123,14 @@ pub fn render(now: DateTime<Local>, cfg: &Config, avail_w: usize, avail_h: usize
     lines
 }
 
-fn dotted_circle_line(canvas: &mut Canvas, cx: f64, cy: f64, max_r: f64, angle: f64, spacing: usize) {
+fn dotted_circle_line(
+    canvas: &mut Canvas,
+    cx: f64,
+    cy: f64,
+    max_r: f64,
+    angle: f64,
+    spacing: usize,
+) {
     let steps = (max_r / 2.0) as usize;
     for i in 0..=steps {
         if i % spacing == 0 {
