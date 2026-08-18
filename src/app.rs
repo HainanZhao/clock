@@ -351,7 +351,8 @@ fn event_loop(out: &mut Stdout, cfg: &mut Config) -> Result<()> {
         let _ = out.write_all(b"\0");
         out.flush()?;
 
-        let wait = next_wake(cfg, Local::now(), active_alarm.is_some());
+        let wait =
+            next_wake(cfg, Local::now(), active_alarm.is_some()).min(Duration::from_millis(100));
         if event::poll(wait)? {
             match event::read()? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => {
